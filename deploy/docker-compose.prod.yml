@@ -1,0 +1,50 @@
+services:
+  z_postgres:
+    image: postgres:16-alpine
+    container_name: z_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zdb}
+      POSTGRES_USER: ${POSTGRES_USER:-z_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_secure_password}
+    ports:
+      - "${POSTGRES_HOST_PORT:-55432}:${POSTGRES_CONTAINER_PORT:-5432}"
+    volumes:
+      - z_postgres_data:/var/lib/postgresql/data
+    networks:
+      - z_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  z_backend:
+    container_name: z_backend
+    restart: unless-stopped
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env.prod
+        required: false
+    ports:
+      - "${BACKEND_HOST_PORT:-3002}:${BACKEND_CONTAINER_PORT:-3000}"
+    depends_on:
+      z_postgres:
+        condition: service_healthy
+    networks:
+      - z_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:$${PORT:-3000}/api/v1/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  z_postgres_data:
+
+networks:
+  z_network:
+    name: z_network
