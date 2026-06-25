@@ -13,6 +13,7 @@ type DeepgramResponse = {
         transcript?: string;
         confidence?: number;
         languages?: string[];
+        detected_language?: string;
       }>;
       detected_language?: string;
     }>;
@@ -24,8 +25,16 @@ type DeepgramResponse = {
 
 type TranscriptResponse = {
   transcript: string;
-  language: string;
+  language: 'fr' | 'en' | 'ar' | 'unknown';
   confidence: number;
+};
+
+type DeepgramOptions = {
+  model: string;
+  smart_format: 'true';
+  punctuate: 'true';
+  language?: 'fr' | 'en' | 'ar';
+  detect_language?: 'true';
 };
 
 export interface SpeechProvider {
@@ -48,10 +57,11 @@ export class SpeechService implements SpeechProvider {
 
   async transcribe(file: any, selectedLanguage = 'auto'): Promise<TranscriptResponse> {
     const mime = this.normalizeMime(file.mimetype, file.originalname);
-    const deepgramLanguage = this.mapLanguage(selectedLanguage);
+    const deepgramOptions = this.buildDeepgramOptions(selectedLanguage);
     this.debug(`received file mime: ${file.mimetype || 'unknown'} -> ${mime}`);
     this.debug(`received file size: ${file.size ?? file.buffer?.length ?? 0}`);
-    this.debug(`selected speech language: ${selectedLanguage} -> ${deepgramLanguage ?? 'auto'}`);
+    this.debug(`selected speech language: ${selectedLanguage}`);
+    this.debug(`Deepgram options: ${JSON.stringify(deepgramOptions)}`);
 
     if (!this.acceptedMime.has(mime)) {
       throw new BadRequestException('Format audio non supporté.');
@@ -63,15 +73,7 @@ export class SpeechService implements SpeechProvider {
     }
 
     this.debug('Deepgram request started');
-    const params = new URLSearchParams({
-      model: 'nova-2',
-      smart_format: 'true',
-    });
-    if (deepgramLanguage) {
-      params.set('language', deepgramLanguage);
-    } else {
-      params.set('detect_language', 'true');
-    }
+    const params = new URLSearchParams(deepgramOptions);
 
     const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
       method: 'POST',
@@ -90,7 +92,8 @@ export class SpeechService implements SpeechProvider {
     }
 
     const json = (await response.json()) as DeepgramResponse;
-    const normalized = this.normalizeDeepgram(json, deepgramLanguage);
+    const normalized = this.normalizeDeepgram(json, deepgramOptions.language ?? null);
+    this.debug(`Deepgram detected language: ${normalized.language}`);
     this.debug(`Deepgram response transcript length: ${normalized.transcript.length}`);
     this.debug(
       `returned response body shape: ${JSON.stringify({
@@ -104,11 +107,12 @@ export class SpeechService implements SpeechProvider {
 
   private normalizeDeepgram(
     json: DeepgramResponse,
-    selectedLanguage: string | null,
+    selectedLanguage: 'fr' | 'en' | 'ar' | null,
   ): TranscriptResponse {
     const channel = json.results?.channels?.[0];
     const alternative = channel?.alternatives?.[0];
     const language =
+      alternative?.detected_language ??
       alternative?.languages?.[0] ??
       channel?.detected_language ??
       json.metadata?.detected_language ??
@@ -116,26 +120,42 @@ export class SpeechService implements SpeechProvider {
       'unknown';
     return {
       transcript: alternative?.transcript?.trim() ?? '',
-      language,
+      language: this.normalizeLanguageCode(language),
       confidence: alternative?.confidence ?? 0,
     };
   }
 
-  private mapLanguage(language?: string | null): string | null {
-    switch (language) {
+  private buildDeepgramOptions(language?: string | null): DeepgramOptions {
+    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-2-general';
+    const options: DeepgramOptions = {
+      model,
+      smart_format: 'true',
+      punctuate: 'true',
+    };
+
+    switch (language?.trim().toLowerCase()) {
       case 'fr':
       case 'en':
       case 'ar':
-        return language;
+        return { ...options, language: language.trim().toLowerCase() as 'fr' | 'en' | 'ar' };
       case 'auto':
+      case 'fr-en':
       case 'mixed':
       case '':
       case undefined:
       case null:
-        return null;
+        return { ...options, detect_language: 'true' };
       default:
         throw new BadRequestException('Langue de transcription non supportée.');
     }
+  }
+
+  private normalizeLanguageCode(language?: string | null): 'fr' | 'en' | 'ar' | 'unknown' {
+    const normalized = language?.trim().toLowerCase() ?? '';
+    if (normalized.startsWith('fr')) return 'fr';
+    if (normalized.startsWith('en')) return 'en';
+    if (normalized.startsWith('ar')) return 'ar';
+    return 'unknown';
   }
 
   private normalizeMime(mimetype = '', filename = '') {
