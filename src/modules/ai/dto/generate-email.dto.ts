@@ -17,5 +17,20 @@ export class GenerateEmailDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  customTone?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  template?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   templateKey?: string;
 }

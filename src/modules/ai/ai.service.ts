@@ -41,8 +41,10 @@ export class AiService implements AiProvider {
             content: [
               'You are Z, an AI assistant that turns voice transcripts into ready-to-send emails.',
               'Analyze the transcript and detect language, tone, intent, subject, body, and suggested recipient when possible.',
+              'Generate the email in the SAME language as the transcript unless the user explicitly requested another language. Never translate automatically.',
               'Allowed tones: professional, administrative, friendly, student, formal, business.',
               'If a tone is provided by the user, use it. Otherwise choose the best tone automatically.',
+              'If customTone is provided, follow that custom tone instruction and choose the closest allowed tone label for the tone field.',
               'Return ONLY valid JSON with this exact shape: {"language":"...","tone":"...","intent":"...","subject":"...","body":"...","suggestedRecipient":"..."}',
               'No markdown. No explanations.',
             ].join(' '),
@@ -52,7 +54,9 @@ export class AiService implements AiProvider {
             content: JSON.stringify({
               transcript: dto.transcript,
               tone: dto.tone,
-              templateKey: dto.templateKey,
+              customTone: dto.customTone,
+              template: dto.template || dto.templateKey,
+              language: dto.language,
             }),
           },
         ],
@@ -71,12 +75,14 @@ export class AiService implements AiProvider {
 
   private localDraft(dto: GenerateEmailDto): GeneratedEmailResponse & { provider: string } {
     const tone = dto.tone || this.detectLocalTone(dto.transcript);
+    const language = dto.language && dto.language !== 'auto' ? dto.language : 'unknown';
+    const toneInstruction = dto.customTone ? `\n\nTone instruction: ${dto.customTone.trim()}` : '';
     return {
-      language: 'unknown',
+      language,
       tone,
       intent: 'email_draft',
       subject: 'Follow-up',
-      body: `Hello,\n\n${dto.transcript.trim()}\n\nBest regards,`,
+      body: `Hello,\n\n${dto.transcript.trim()}${toneInstruction}\n\nBest regards,`,
       suggestedRecipient: '',
       provider: 'local-placeholder',
     };
@@ -84,7 +90,7 @@ export class AiService implements AiProvider {
 
   private normalizeDraft(value: any, dto: GenerateEmailDto): GeneratedEmailResponse {
     return {
-      language: String(value.language || 'unknown'),
+      language: String(value.language || dto.language || 'unknown'),
       tone: this.normalizeTone(value.tone || dto.tone),
       intent: String(value.intent || 'email_draft'),
       subject: String(value.subject || 'Votre e-mail'),

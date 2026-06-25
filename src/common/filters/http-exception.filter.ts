@@ -20,6 +20,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status: number;
     let message: string;
     let error: string;
+    let extra: Record<string, unknown> = {};
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -28,6 +29,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
         const res = exceptionResponse as any;
         message = Array.isArray(res.message) ? res.message.join(', ') : res.message;
         error = res.error || exception.message;
+        extra = Object.fromEntries(
+          Object.entries(res).filter(([key]) => !['statusCode', 'message', 'error'].includes(key)),
+        );
       } else {
         message = String(exceptionResponse);
         error = exception.message;
@@ -44,6 +48,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       data: null,
       message,
       error,
+      ...extra,
       timestamp: new Date().toISOString(),
       path: request.url,
     });

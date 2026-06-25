@@ -8,21 +8,38 @@ datasource db {
 }
 
 model User {
-  id               String       @id @default(uuid())
-  email            String       @unique
-  name             String
-  passwordHash     String
-  refreshTokenHash String?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-  drafts           EmailDraft[]
+  id                     String                  @id @default(uuid())
+  email                  String                  @unique
+  name                   String
+  passwordHash           String
+  refreshTokenHash       String?
+  emailVerifiedAt        DateTime?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  drafts                 EmailDraft[]
+  emailVerificationCodes EmailVerificationCode[]
 
   @@index([email])
 }
 
+model EmailVerificationCode {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int       @default(0)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
 model EmailDraft {
   id          String   @id @default(uuid())
-  userId      String
+  userId      String?
+  deviceId    String?
   recipient   String?
   subject     String
   body        String
@@ -33,8 +50,9 @@ model EmailDraft {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([deviceId])
   @@index([createdAt])
 }
