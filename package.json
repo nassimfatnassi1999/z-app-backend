@@ -7,10 +7,10 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "nest start",
-    "start:dev": "nest start --watch",
-    "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start": "TS_NODE_BASEURL=dist nest start --exec \"node -r ./register-paths\"",
+    "start:dev": "TS_NODE_BASEURL=dist nest start --watch --exec \"node -r ./register-paths\"",
+    "start:debug": "TS_NODE_BASEURL=dist nest start --debug --watch --exec \"node -r ./register-paths\"",
+    "start:prod": "TS_NODE_BASEURL=dist node -r ./register-paths dist/main",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
     "test": "jest",
     "prisma:generate": "prisma generate",
@@ -64,6 +64,9 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/$1"
     },
     "collectCoverageFrom": ["**/*.(t|j)s"],
     "coverageDirectory": "../coverage",

@@ -32,6 +32,7 @@ type DeepgramResponse = {
 
 type TranscriptResponse = {
   transcript: string;
+  detectedLanguage?: NormalizedSpeechLanguage;
   language: NormalizedSpeechLanguage;
   confidence: number;
   duration: number;
@@ -77,32 +78,29 @@ export class SpeechService implements SpeechProvider {
       throw new ServiceUnavailableException('Deepgram API key missing');
     }
 
-    this.debug('Deepgram request started');
-    const params = new URLSearchParams(deepgramOptions);
-
-    const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Token ${apiKey}`,
-        'content-type': mime,
-      },
-      body: file.buffer as unknown as BodyInit,
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      this.debug(`Deepgram error status: ${response.status}`);
-      this.debug(`Deepgram error body length: ${body.length}`);
-      throw new ServiceUnavailableException('Deepgram transcription failed');
+    let json: DeepgramResponse;
+    let effectiveDeepgramLanguage = deepgramLanguage ?? null;
+    try {
+      json = await this.requestDeepgram(apiKey, mime, file.buffer, deepgramOptions);
+    } catch (error) {
+      if (!deepgramLanguage) throw error;
+      this.debug('Selected language transcription failed; retrying with auto-detect');
+      json = await this.requestDeepgram(apiKey, mime, file.buffer, this.buildDeepgramOptions());
+      effectiveDeepgramLanguage = null;
     }
 
-    const json = (await response.json()) as DeepgramResponse;
-    const normalized = this.normalizeDeepgram(json, deepgramLanguage ?? null);
+    const normalized = this.normalizeDeepgram(json, effectiveDeepgramLanguage);
     const finalLanguage =
-      deepgramLanguage === undefined && normalized.confidence < 0.55
+      deepgramLanguage === undefined &&
+      normalized.confidence < 0.55 &&
+      normalized.transcript.length === 0
         ? 'unknown'
         : normalized.language;
-    const result = { ...normalized, language: finalLanguage };
+    const result = {
+      ...normalized,
+      detectedLanguage: finalLanguage,
+      language: finalLanguage,
+    };
     this.debug(`Deepgram detected language: ${normalized.language}`);
     this.debug(`confidence: ${normalized.confidence}`);
     this.debug(`transcript length: ${normalized.transcript.length}`);
@@ -115,6 +113,33 @@ export class SpeechService implements SpeechProvider {
       })}`,
     );
     return result;
+  }
+
+  private async requestDeepgram(
+    apiKey: string,
+    mime: string,
+    buffer: Buffer,
+    options: DeepgramOptions,
+  ): Promise<DeepgramResponse> {
+    this.debug('Deepgram request started');
+    const params = new URLSearchParams(options);
+    const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Token ${apiKey}`,
+        'content-type': mime,
+      },
+      body: buffer as unknown as BodyInit,
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      this.debug(`Deepgram error status: ${response.status}`);
+      this.debug(`Deepgram error body length: ${body.length}`);
+      throw new ServiceUnavailableException('Deepgram transcription failed');
+    }
+
+    return (await response.json()) as DeepgramResponse;
   }
 
   private normalizeDeepgram(
@@ -139,7 +164,7 @@ export class SpeechService implements SpeechProvider {
   }
 
   private buildDeepgramOptions(language?: SupportedSpeechLanguage): DeepgramOptions {
-    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-2-general';
+    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-3';
     const options: DeepgramOptions = {
       model,
       smart_format: 'true',
