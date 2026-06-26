@@ -7,6 +7,7 @@ import { DraftsModule } from './modules/drafts/drafts.module';
 import { SpeechModule } from './modules/speech/speech.module';
 import { UsersModule } from './modules/users/users.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
+import { MailboxModule } from './modules/mailbox/mailbox.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -19,6 +20,7 @@ import { HealthController } from './health.controller';
     SpeechModule,
     UsersModule,
     ConversationsModule,
+    MailboxModule,
   ],
   controllers: [HealthController],
 })

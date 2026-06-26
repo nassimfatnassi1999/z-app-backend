@@ -38,6 +38,23 @@ export class UsersService {
     }));
   }
 
+  async checkEmail(currentUserId: string, raw: string) {
+    const email = raw.trim().toLowerCase();
+    if (!email) throw new BadRequestException('Email is required');
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, name: true, email: true },
+    });
+    if (!user || user.id === currentUserId) return { exists: false };
+    return {
+      exists: true,
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+      avatarInitials: this.initials(user.name),
+    };
+  }
+
   private async suggestions(username: string) {
     const base = username.replace(/[^a-z0-9_.]/g, '').slice(0, 18) || 'user';
     const year = new Date().getFullYear();

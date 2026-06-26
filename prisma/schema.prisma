@@ -18,12 +18,41 @@ model User {
   createdAt                DateTime                  @default(now())
   updatedAt                DateTime                  @updatedAt
   drafts                   EmailDraft[]
+  sentEmails               Email[]                   @relation("SentEmails")
+  receivedEmails           Email[]                   @relation("ReceivedEmails")
   emailVerificationCodes   EmailVerificationCode[]
   conversationParticipants ConversationParticipant[]
   messages                 Message[]
 
   @@index([email])
   @@index([username])
+}
+
+model Email {
+  id          String    @id @default(uuid())
+  senderId    String
+  recipientId String
+  subject     String
+  body        String
+  transcript  String?
+  tone        String
+  language    String
+  status      String    @default("sent")
+  read        Boolean   @default(false)
+  deleted     Boolean   @default(false)
+  starred     Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  readAt      DateTime?
+
+  sender    User @relation("SentEmails", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User @relation("ReceivedEmails", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, createdAt])
+  @@index([recipientId, createdAt])
+  @@index([recipientId, read])
+  @@index([senderId, deleted])
+  @@index([recipientId, deleted])
 }
 
 model EmailVerificationCode {

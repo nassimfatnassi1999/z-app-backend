@@ -20,6 +20,13 @@ export class UsersController {
     return this.users.checkUsername(username);
   }
 
+  @Get('check-email')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  checkEmail(@Req() req: AuthRequest, @Query('email') email = '') {
+    return this.users.checkEmail(req.user.userId, email);
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
