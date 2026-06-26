@@ -17,6 +17,9 @@ import { RegisterDto } from './dto/register.dto';
 import { ResendVerificationCodeDto } from './dto/resend-verification-code.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 
+const RESERVED_USERNAMES = new Set(['admin', 'support', 'z', 'system', 'root']);
+const USERNAME_PATTERN = /^[a-z0-9_.]{3,24}$/;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -27,12 +30,21 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (existing) throw new ConflictException('Email already registered');
+    const email = dto.email.toLowerCase().trim();
+    const username = dto.username.trim().toLowerCase();
+    if (!USERNAME_PATTERN.test(username) || RESERVED_USERNAMES.has(username)) {
+      throw new BadRequestException('Username is not allowed');
+    }
+
+    const existingEmail = await this.prisma.user.findUnique({ where: { email } });
+    if (existingEmail) throw new ConflictException('Email already registered');
+    const existingUsername = await this.prisma.user.findUnique({ where: { username } });
+    if (existingUsername) throw new ConflictException('Username already taken');
 
     const user = await this.prisma.user.create({
       data: {
-        email: dto.email.toLowerCase(),
+        email,
+        username,
         name: dto.name,
         passwordHash: await bcrypt.hash(dto.password, 12),
         emailVerifiedAt: null,
@@ -59,7 +71,7 @@ export class AuthService {
       });
     }
 
-    return this.issueTokens(user.id, user.email, user.name);
+    return this.issueTokens(user.id, user.email, user.name, user.username);
   }
 
   async verifyEmail(dto: VerifyEmailDto) {
@@ -104,7 +116,7 @@ export class AuthService {
       }),
     ]);
 
-    return this.issueTokens(user.id, user.email, user.name);
+    return this.issueTokens(user.id, user.email, user.name, user.username);
   }
 
   async resendVerificationCode(dto: ResendVerificationCodeDto) {
@@ -129,7 +141,7 @@ export class AuthService {
       if (!user?.refreshTokenHash || !(await bcrypt.compare(refreshToken, user.refreshTokenHash))) {
         throw new UnauthorizedException('Invalid refresh token');
       }
-      return this.issueTokens(user.id, user.email, user.name);
+      return this.issueTokens(user.id, user.email, user.name, user.username);
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
@@ -146,7 +158,14 @@ export class AuthService {
   async me(userId: string) {
     return this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, name: true, emailVerifiedAt: true, createdAt: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        emailVerifiedAt: true,
+        createdAt: true,
+      },
     });
   }
 
@@ -156,7 +175,14 @@ export class AuthService {
     return this.prisma.user.update({
       where: { id: userId },
       data: { name: trimmed },
-      select: { id: true, email: true, name: true, emailVerifiedAt: true, createdAt: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        emailVerifiedAt: true,
+        createdAt: true,
+      },
     });
   }
 
@@ -222,7 +248,7 @@ export class AuthService {
     return Number(this.config.get<string>('EMAIL_VERIFICATION_MAX_ATTEMPTS') || 5);
   }
 
-  private async issueTokens(userId: string, email: string, name: string) {
+  private async issueTokens(userId: string, email: string, name: string, username: string) {
     const accessToken = await this.jwt.signAsync(
       { sub: userId, email },
       {
@@ -245,7 +271,7 @@ export class AuthService {
     });
 
     return {
-      user: { id: userId, email, name },
+      user: { id: userId, email, name, username },
       accessToken,
       refreshToken,
     };

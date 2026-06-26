@@ -7,7 +7,7 @@ Production Docker Compose deployment for the Z NestJS backend and a dedicated Po
 - `z_backend`: NestJS API container, exposed on host port `3002` by default.
 - `z_postgres`: PostgreSQL container, internal port `5432`, optional host debug port `55432`.
 
-No Redis, MinIO, Nginx, PM2, Gmail OAuth, or SMTP services are deployed.
+No Redis, MinIO, Nginx, PM2, or generated-message mail delivery services are deployed.
 
 ## Ports
 

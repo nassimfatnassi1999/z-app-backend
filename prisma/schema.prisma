@@ -8,18 +8,22 @@ datasource db {
 }
 
 model User {
-  id                     String                  @id @default(uuid())
-  email                  String                  @unique
-  name                   String
-  passwordHash           String
-  refreshTokenHash       String?
-  emailVerifiedAt        DateTime?
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  drafts                 EmailDraft[]
-  emailVerificationCodes EmailVerificationCode[]
+  id                       String                    @id @default(uuid())
+  email                    String                    @unique
+  username                 String                    @unique
+  name                     String
+  passwordHash             String
+  refreshTokenHash         String?
+  emailVerifiedAt          DateTime?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  drafts                   EmailDraft[]
+  emailVerificationCodes   EmailVerificationCode[]
+  conversationParticipants ConversationParticipant[]
+  messages                 Message[]
 
   @@index([email])
+  @@index([username])
 }
 
 model EmailVerificationCode {
@@ -50,9 +54,55 @@ model EmailDraft {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
 
   @@index([userId])
   @@index([deviceId])
   @@index([createdAt])
+}
+
+model Conversation {
+  id            String                    @id @default(uuid())
+  type          String                    @default("direct")
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  lastMessageAt DateTime?
+  participants  ConversationParticipant[]
+  messages      Message[]
+
+  @@index([lastMessageAt])
+}
+
+model ConversationParticipant {
+  id             String    @id @default(uuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime  @default(now())
+  lastReadAt     DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id                    String    @id @default(uuid())
+  conversationId        String
+  senderId              String
+  content               String
+  messageType           String    @default("text")
+  generatedEmailDraftId String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  deletedAt             DateTime?
+
+  conversation        Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender              User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  generatedEmailDraft EmailDraft?  @relation(fields: [generatedEmailDraftId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
 }

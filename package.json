@@ -7,10 +7,10 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "TS_NODE_BASEURL=dist nest start --exec \"node -r ./register-paths\"",
-    "start:dev": "TS_NODE_BASEURL=dist nest start --watch --exec \"node -r ./register-paths\"",
-    "start:debug": "TS_NODE_BASEURL=dist nest start --debug --watch --exec \"node -r ./register-paths\"",
-    "start:prod": "TS_NODE_BASEURL=dist node -r ./register-paths dist/main",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
     "test": "jest",
     "prisma:generate": "prisma generate",
@@ -25,7 +25,9 @@
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/passport": "^10.0.3",
     "@nestjs/platform-express": "^10.3.0",
+    "@nestjs/platform-socket.io": "^10.4.20",
     "@nestjs/swagger": "^7.3.0",
+    "@nestjs/websockets": "^10.4.20",
     "@prisma/client": "^5.11.0",
     "bcrypt": "^5.1.1",
     "class-transformer": "^0.5.1",
@@ -33,7 +35,8 @@
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.1",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.3.2",
@@ -64,9 +67,6 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "moduleNameMapper": {
-      "^@/(.*)$": "<rootDir>/$1"
     },
     "collectCoverageFrom": ["**/*.(t|j)s"],
     "coverageDirectory": "../coverage",

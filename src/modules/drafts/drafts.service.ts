@@ -3,7 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDraftDto } from './dto/create-draft.dto';
 
 type DraftOwner = { userId?: string; deviceId?: string };
-type DraftStatus = 'draft' | 'scheduled' | 'opened_in_mail_app' | 'deleted';
+type DraftStatus = 'draft' | 'scheduled' | 'sent_internal' | 'deleted';
 
 @Injectable()
 export class DraftsService {
