@@ -13,6 +13,7 @@ export class NotificationsService {
   ) {}
 
   registerDevice(userId: string, dto: RegisterDeviceDto) {
+    this.logger.debug(`Registering ${dto.platform} push device for user ${userId}.`);
     return this.prisma.devicePushToken.upsert({
       where: { token: dto.token },
       create: { ...dto, userId },
@@ -63,6 +64,7 @@ export class NotificationsService {
         where: { userId: input.recipientId, revokedAt: null },
         select: { token: true },
       });
+      this.logger.log(`Sending new-email push to ${devices.length} active recipient device(s).`);
       const result = await this.push.sendNewEmail(
         devices.map((device) => device.token),
         {
@@ -77,6 +79,8 @@ export class NotificationsService {
           where: { token: { in: result.invalidTokens } },
           data: { revokedAt: new Date() },
         });
+      if (result.invalidTokens.length)
+        this.logger.warn(`Revoked ${result.invalidTokens.length} invalid push token(s).`);
     } catch (error) {
       this.logger.warn(`Push delivery failed without blocking email: ${(error as Error).message}`);
     }

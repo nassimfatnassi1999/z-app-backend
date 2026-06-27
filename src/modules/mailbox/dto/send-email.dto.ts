@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 
 export class SendEmailDto {
   @ApiProperty()
@@ -30,4 +30,14 @@ export class SendEmailDto {
   @IsOptional()
   @IsString()
   language?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  replyToEmailId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  draftId?: string;
 }

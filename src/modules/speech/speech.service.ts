@@ -7,9 +7,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   languageMap,
+  isSupportedLanguageInput,
   normalizeLanguageCode,
   NormalizedSpeechLanguage,
   SupportedSpeechLanguage,
+  unsupportedLanguageResponse,
 } from './languageMap';
 
 type DeepgramResponse = {
@@ -157,8 +159,10 @@ export class SpeechService implements SpeechProvider {
   }
 
   private deepgramLanguageFor(language: string): SupportedSpeechLanguage | undefined {
-    if (language in languageMap) return languageMap[language];
-    throw new BadRequestException('Langue de transcription non supportée.');
+    if (isSupportedLanguageInput(language) && language !== 'unknown') {
+      return languageMap[language];
+    }
+    throw new BadRequestException(unsupportedLanguageResponse);
   }
 
   private normalizeMime(mimetype = '', filename = '') {

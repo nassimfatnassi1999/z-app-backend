@@ -21,7 +21,7 @@ No special Deepgram account configuration is usually required for language
 selection. The API controls transcription language through request options:
 
 - `auto` omits `language` and uses `detect_language=true`.
-- `fr`, `en`, `ar`, `de`, `es`, `it`, `pt`, `nl`, and `tr` force the matching
+- `fr`, `en`, `de`, `es`, `it`, `pt`, `nl`, and `tr` force the matching
   Deepgram `language` option.
 - Requests use `smart_format=true`, `punctuate=true`, `paragraphs=true`,
   `utterances=true`, `diarize=false`, and `DEEPGRAM_MODEL` when set, defaulting
@@ -38,7 +38,7 @@ The backend normalizes responses to:
 }
 ```
 
-`language` is one of `fr`, `en`, `ar`, `de`, `es`, `it`, `pt`, `nl`, `tr`, or
+`language` is one of `fr`, `en`, `de`, `es`, `it`, `pt`, `nl`, `tr`, or
 `unknown`. If automatic detection confidence is below `0.55`, the API returns
 `unknown`.
 

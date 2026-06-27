@@ -81,8 +81,12 @@ export class MailboxController {
   }
 
   @Get(':id')
-  detail(@Req() req: AuthRequest, @Param('id') id: string) {
-    return this.mailbox.detail(req.user.userId, id);
+  detail(
+    @Req() req: AuthRequest,
+    @Param('id') id: string,
+    @Query('includeTranscript') includeTranscript?: string,
+  ) {
+    return this.mailbox.detail(req.user.userId, id, includeTranscript === 'true');
   }
 
   @Patch(':id/read')

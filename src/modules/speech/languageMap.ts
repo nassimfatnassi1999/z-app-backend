@@ -1,4 +1,4 @@
-export type SupportedSpeechLanguage = 'fr' | 'en' | 'ar' | 'de' | 'es' | 'it' | 'pt' | 'nl' | 'tr';
+export type SupportedSpeechLanguage = 'fr' | 'en' | 'de' | 'es' | 'it' | 'pt' | 'nl' | 'tr';
 
 export type NormalizedSpeechLanguage = SupportedSpeechLanguage | 'unknown';
 
@@ -6,7 +6,6 @@ export const languageMap: Record<string, SupportedSpeechLanguage | undefined> = 
   auto: undefined,
   fr: 'fr',
   en: 'en',
-  ar: 'ar',
   de: 'de',
   es: 'es',
   it: 'it',
@@ -18,6 +17,21 @@ export const languageMap: Record<string, SupportedSpeechLanguage | undefined> = 
 export const supportedLanguageCodes = new Set<SupportedSpeechLanguage>(
   Object.values(languageMap).filter(Boolean) as SupportedSpeechLanguage[],
 );
+
+export const unsupportedLanguageResponse = {
+  code: 'UNSUPPORTED_LANGUAGE',
+  message: 'Selected language is not supported.',
+} as const;
+
+export function isSupportedLanguageInput(language?: string | null): boolean {
+  const normalized = language?.trim().toLowerCase() ?? '';
+  return (
+    normalized === '' ||
+    normalized === 'auto' ||
+    normalized === 'unknown' ||
+    supportedLanguageCodes.has(normalized as SupportedSpeechLanguage)
+  );
+}
 
 export function normalizeLanguageCode(language?: string | null): NormalizedSpeechLanguage {
   const normalized = language?.trim().toLowerCase() ?? '';

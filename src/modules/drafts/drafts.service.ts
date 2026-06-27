@@ -17,7 +17,7 @@ export class DraftsService {
 
   list(owner: DraftOwner) {
     return this.prisma.emailDraft.findMany({
-      where: this.ownerWhere(owner),
+      where: { ...this.ownerWhere(owner), status: 'draft' },
       orderBy: { createdAt: 'desc' },
     });
   }

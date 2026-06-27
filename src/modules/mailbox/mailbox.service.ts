@@ -55,14 +55,16 @@ export class MailboxService {
   async unreadCount(userId: string) {
     return {
       unread: await this.prisma.email.count({
-        where: { recipientId: userId, read: false, deleted: false },
+        where: { recipientId: userId, status: 'sent', read: false, deleted: false },
       }),
     };
   }
 
   async counts(userId: string) {
     const [inboxUnread, drafts, trash] = await Promise.all([
-      this.prisma.email.count({ where: { recipientId: userId, read: false, deleted: false } }),
+      this.prisma.email.count({
+        where: { recipientId: userId, status: 'sent', read: false, deleted: false },
+      }),
       this.prisma.emailDraft.count({ where: { userId, status: 'draft' } }),
       this.prisma.email.count({
         where: { deleted: true, OR: [{ senderId: userId }, { recipientId: userId }] },
@@ -78,18 +80,39 @@ export class MailboxService {
     const recipient = await this.prisma.user.findUnique({ where: { id: dto.recipientId } });
     if (!recipient) throw new NotFoundException('Recipient not found');
 
-    const email = await this.prisma.email.create({
-      data: {
-        senderId: userId,
-        recipientId: dto.recipientId,
-        subject: dto.subject.trim(),
-        body: dto.body.trim(),
-        transcript: dto.transcript?.trim() || null,
-        tone: dto.tone || 'professional',
-        language: dto.language || 'unknown',
-        status: 'sent',
-      },
-      include: this.emailInclude(),
+    const replyTo = dto.replyToEmailId
+      ? await this.findVisibleEmail(userId, dto.replyToEmailId)
+      : null;
+    const email = await this.prisma.$transaction(async (tx) => {
+      if (dto.draftId) {
+        const draft = await tx.emailDraft.findFirst({
+          where: { id: dto.draftId, userId, status: 'draft' },
+        });
+        if (!draft) throw new NotFoundException('Draft not found');
+      }
+      const created = await tx.email.create({
+        data: {
+          senderId: userId,
+          recipientId: dto.recipientId,
+          subject: dto.subject.trim(),
+          body: dto.body.trim(),
+          transcript: dto.transcript?.trim() || null,
+          tone: dto.tone || 'professional',
+          language: dto.language || 'unknown',
+          status: 'sent',
+          sentAt: new Date(),
+          replyToEmailId: replyTo?.id,
+          threadId: replyTo ? replyTo.threadId || replyTo.id : undefined,
+        },
+        include: this.emailInclude(),
+      });
+      if (dto.draftId) {
+        await tx.emailDraft.update({
+          where: { id: dto.draftId },
+          data: { status: 'sent_internal' },
+        });
+      }
+      return created;
     });
     const serialized = this.serializeEmail(email, userId);
     this.events.emitToUser(
@@ -107,7 +130,7 @@ export class MailboxService {
     return serialized;
   }
 
-  async detail(userId: string, id: string) {
+  async detail(userId: string, id: string, includeTranscript = false) {
     const email = await this.findVisibleEmail(userId, id);
     if (email.recipientId === userId && !email.read) {
       const updated = await this.prisma.email.update({
@@ -116,9 +139,9 @@ export class MailboxService {
         include: this.emailInclude(),
       });
       this.events.emitToUser(email.senderId, 'email:read', { id });
-      return this.serializeEmail(updated, userId);
+      return this.serializeEmail(updated, userId, includeTranscript && updated.senderId === userId);
     }
-    return this.serializeEmail(email, userId);
+    return this.serializeEmail(email, userId, includeTranscript && email.senderId === userId);
   }
 
   async markRead(userId: string, id: string, read = true) {
@@ -224,7 +247,7 @@ export class MailboxService {
   private folderWhere(userId: string, folder: MailboxFolder) {
     switch (folder) {
       case 'sent':
-        return { senderId: userId, deleted: false };
+        return { senderId: userId, status: 'sent', deleted: false };
       case 'trash':
         return { deleted: true, OR: [{ senderId: userId }, { recipientId: userId }] };
       case 'favorites':
@@ -234,10 +257,10 @@ export class MailboxService {
           OR: [{ senderId: userId }, { recipientId: userId }],
         };
       case 'unread':
-        return { recipientId: userId, read: false, deleted: false };
+        return { recipientId: userId, status: 'sent', read: false, deleted: false };
       case 'inbox':
       default:
-        return { recipientId: userId, deleted: false };
+        return { recipientId: userId, status: 'sent', deleted: false };
     }
   }
 
@@ -257,12 +280,11 @@ export class MailboxService {
     };
   }
 
-  private serializeEmail(email: any, currentUserId: string) {
-    return {
+  private serializeEmail(email: any, currentUserId: string, includeTranscript = false) {
+    const result: Record<string, unknown> = {
       id: email.id,
       subject: email.subject,
       body: email.body,
-      transcript: email.transcript,
       tone: email.tone,
       language: email.language,
       status: email.status,
@@ -273,12 +295,17 @@ export class MailboxService {
       createdAt: email.createdAt,
       updatedAt: email.updatedAt,
       readAt: email.readAt,
+      sentAt: email.sentAt,
+      replyToEmailId: email.replyToEmailId,
+      threadId: email.threadId || email.id,
       sender: this.serializeUser(email.sender),
       recipient: this.serializeUser(email.recipient),
       preview: email.body.slice(0, 140),
       aiGenerated: Boolean(email.transcript || email.tone),
       direction: email.senderId === currentUserId ? 'sent' : 'received',
     };
+    if (includeTranscript) result.transcript = email.transcript;
+    return result;
   }
 
   private serializeUser(user: any) {
