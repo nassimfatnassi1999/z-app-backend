@@ -83,6 +83,13 @@ export class MailboxService {
     const replyTo = dto.replyToEmailId
       ? await this.findVisibleEmail(userId, dto.replyToEmailId)
       : null;
+    if (replyTo && replyTo.recipientId !== userId) {
+      throw new BadRequestException('Only the recipient can reply to this email');
+    }
+    if (replyTo && replyTo.senderId !== dto.recipientId) {
+      throw new BadRequestException('Reply recipient must be the original sender');
+    }
+    const subject = replyTo ? this.replySubject(replyTo.subject) : dto.subject.trim();
     const email = await this.prisma.$transaction(async (tx) => {
       if (dto.draftId) {
         const draft = await tx.emailDraft.findFirst({
@@ -94,7 +101,7 @@ export class MailboxService {
         data: {
           senderId: userId,
           recipientId: dto.recipientId,
-          subject: dto.subject.trim(),
+          subject,
           body: dto.body.trim(),
           transcript: dto.transcript?.trim() || null,
           tone: dto.tone || 'professional',
@@ -327,5 +334,10 @@ export class MailboxService {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? '')
       .join('');
+  }
+
+  private replySubject(originalSubject: string) {
+    const subject = originalSubject.trim();
+    return /^re\s*:/i.test(subject) ? subject : `Re: ${subject}`;
   }
 }
