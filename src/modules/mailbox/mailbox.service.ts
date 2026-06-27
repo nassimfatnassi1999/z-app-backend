@@ -103,7 +103,6 @@ export class MailboxService {
           recipientId: dto.recipientId,
           subject,
           body: dto.body.trim(),
-          transcript: dto.transcript?.trim() || null,
           tone: dto.tone || 'professional',
           language: dto.language || 'unknown',
           status: 'sent',

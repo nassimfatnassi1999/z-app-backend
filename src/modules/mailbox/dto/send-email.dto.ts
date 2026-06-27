@@ -19,11 +19,6 @@ export class SendEmailDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  transcript?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
   tone?: string;
 
   @ApiPropertyOptional()
