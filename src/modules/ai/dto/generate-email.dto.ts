@@ -13,10 +13,28 @@ export class GenerateEmailDto {
   currentBody?: string;
 
   @ApiPropertyOptional({
-    enum: ['professional', 'administrative', 'friendly', 'student', 'formal', 'business'],
+    enum: [
+      'auto',
+      'professional',
+      'administrative',
+      'friendly',
+      'student',
+      'formal',
+      'business',
+      'custom',
+    ],
   })
   @IsOptional()
-  @IsIn(['professional', 'administrative', 'friendly', 'student', 'formal', 'business'])
+  @IsIn([
+    'auto',
+    'professional',
+    'administrative',
+    'friendly',
+    'student',
+    'formal',
+    'business',
+    'custom',
+  ])
   tone?: string;
 
   @ApiPropertyOptional()

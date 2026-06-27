@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GenerateEmailDto } from './dto/generate-email.dto';
 import { GenerateReplyDto } from './dto/generate-reply.dto';
@@ -19,15 +24,17 @@ const EMAIL_JSON_SHAPE =
   '{"language":"...","tone":"...","intent":"...","subject":"...","body":"...","suggestedRecipient":"..."}';
 
 const REFORMULATION_RULES = [
-  'Reformulate the supplied text as a concise, professional email while preserving its exact meaning and original intent.',
+  'You are a senior executive assistant. Transform the supplied transcript into a complete, polished professional email while preserving its exact meaning and original intent.',
   'The supplied user text is the only source of factual information.',
   'Do not invent or infer names, dates, reasons, commitments, deadlines, relationships, urgency, contact details, events, actions, or any other unsupported detail.',
   'Do not add information absent from the supplied user text.',
   'When information is missing, use neutral phrasing or omit it. Never fill a gap with an assumption.',
-  'Improve grammar, spelling, clarity, and structure only. Remove speech artifacts and repetition only when meaning is unchanged.',
-  'Keep the result concise. Do not expand short input into a long email.',
+  'Understand the user intent and improve grammar, spelling, clarity, and structure. Remove speech artifacts and repetition only when meaning is unchanged.',
+  'Generate a complete email body, not a summary, fragment, keyword list, or raw transcript.',
+  'Include a suitable greeting, context, request or action, and closing when appropriate, without inventing a recipient name or sender identity.',
+  'Keep the result concise but complete. Do not expand short input into a long email.',
   'Use the same language as the transcript unless the user explicitly requests a translation.',
-  'Respect the requested tone when supplied, without changing facts or intent.',
+  'When tone is auto or omitted, detect the best tone. Otherwise respect the requested tone without changing facts or intent.',
   'A generic greeting or closing is allowed only if it introduces no person, fact, promise, or unsupported detail.',
 ].join(' ');
 
@@ -36,10 +43,16 @@ const EMAIL_REFORMULATION_PROMPT = [
   'The transcript is the source of truth. The current body is the editing target, but remove or neutralize every detail that is not supported by the transcript.',
   'Do not add any information absent from the transcript.',
   'Create a short, factual subject based only on the supplied text.',
+  'The subject and body must be fully written, useful email content. Never return only a few transcript words.',
   'Before answering, silently verify that every factual detail is supported by the transcript or current body.',
   `Return ONLY valid JSON with exactly this shape: ${EMAIL_JSON_SHAPE}`,
   'No markdown and no explanations.',
 ].join(' ');
+
+const REPAIR_INSTRUCTION =
+  'The previous output was not a complete professional email. Generate a complete email with subject and body. Do not summarize. Do not paste the transcript. Return valid JSON only.';
+
+const GENERATION_FAILED_MESSAGE = 'La génération IA a échoué. Réessayez.';
 
 export interface AiProvider {
   generateEmail(dto: GenerateEmailDto): Promise<GeneratedEmailResponse>;
@@ -47,6 +60,8 @@ export interface AiProvider {
 
 @Injectable()
 export class AiService implements AiProvider {
+  private readonly logger = new Logger(AiService.name);
+
   constructor(private readonly config: ConfigService) {}
 
   async generateEmail(dto: GenerateEmailDto): Promise<GeneratedEmailResponse> {
@@ -57,8 +72,12 @@ export class AiService implements AiProvider {
     }
     const apiKey = this.config.get<string>('GROQ_API_KEY');
     const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    const selectedTone = dto.tone || 'auto';
+    this.logger.log(
+      `provider=groq model=${model} transcriptLength=${cleanedTranscript.length} tone=${selectedTone}`,
+    );
     if (!apiKey || apiKey.startsWith('REPLACE_WITH')) {
-      return this.localDraft(dto);
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -80,7 +99,7 @@ export class AiService implements AiProvider {
             content: JSON.stringify({
               cleanedTranscript,
               currentBody: dto.currentBody,
-              tone: dto.tone,
+              tone: selectedTone,
               customTone: dto.customTone,
               template: dto.template || dto.templateKey,
               language: dto.language,
@@ -92,14 +111,23 @@ export class AiService implements AiProvider {
     });
 
     if (!response.ok) {
-      throw new ServiceUnavailableException('Groq email generation failed');
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
 
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = json.choices?.[0]?.message?.content || '{}';
-    const draft = this.normalizeDraft(this.parseJson(content), dto);
-    const issues = this.qualityIssues(draft);
-    if (issues.length === 0) return draft;
+    let draft: GeneratedEmailResponse | null = null;
+    let issues: string[];
+    try {
+      draft = this.normalizeDraft(this.parseJson(content), dto);
+      issues = this.qualityIssues(draft, cleanedTranscript);
+    } catch {
+      issues = ['The response was not valid JSON.'];
+    }
+    if (draft && issues.length === 0) {
+      this.logger.log(`generatedBodyLength=${draft.body.length} retryUsed=no`);
+      return draft;
+    }
 
     return this.repairDraft(apiKey, model, dto, cleanedTranscript, draft, issues);
   }
@@ -110,25 +138,23 @@ export class AiService implements AiProvider {
       ? dto.originalEmail.subject.trim()
       : `Re: ${dto.originalEmail.subject.trim()}`;
     const apiKey = this.config.get<string>('GROQ_API_KEY');
-    const tone = dto.tone || 'professional';
+    const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    const tone = dto.tone || 'auto';
     const cleanedInstruction = this.cleanTranscript(dto.replyInstruction);
     if (!cleanedInstruction) {
       throw new BadRequestException('Reply instruction is empty after cleaning');
     }
+    this.logger.log(
+      `provider=groq model=${model} transcriptLength=${cleanedInstruction.length} tone=${tone} type=reply`,
+    );
     if (!apiKey || apiKey.startsWith('REPLACE_WITH')) {
-      return {
-        subject,
-        body: cleanedInstruction,
-        tone,
-        language: dto.language || 'auto',
-        provider: 'local-placeholder',
-      };
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile',
+        model,
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: [
@@ -148,37 +174,97 @@ export class AiService implements AiProvider {
               originalEmail: dto.originalEmail,
               cleanedReplyInstruction: cleanedInstruction,
               language: dto.language,
-              tone: dto.tone,
+              tone,
+              customTone: dto.customTone,
               expectedSubject: subject,
             }),
           },
         ],
       }),
     });
-    if (!response.ok) throw new ServiceUnavailableException('Groq reply generation failed');
+    if (!response.ok) throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const value = this.parseJson(json.choices?.[0]?.message?.content || '{}');
-    return {
-      subject,
-      body: this.polishBody(String(value.body || cleanedInstruction)),
-      tone: this.normalizeTone(value.tone || tone),
-      language: String(value.language || dto.language || 'auto'),
-    };
+    try {
+      const value = this.parseJson(json.choices?.[0]?.message?.content || '{}');
+      const reply = {
+        subject,
+        body: this.polishBody(String(value.body || '')),
+        tone: this.normalizeTone(value.tone || tone),
+        language: String(value.language || dto.language || 'auto'),
+      };
+      const issues = this.replyQualityIssues(reply.body, cleanedInstruction);
+      if (issues.length === 0) {
+        this.logger.log(`generatedBodyLength=${reply.body.length} retryUsed=no type=reply`);
+        return reply;
+      }
+      return this.repairReply(apiKey, model, dto, subject, cleanedInstruction, reply, issues);
+    } catch {
+      return this.repairReply(apiKey, model, dto, subject, cleanedInstruction, null, [
+        'The response was not valid JSON.',
+      ]);
+    }
   }
 
-  private localDraft(dto: GenerateEmailDto): GeneratedEmailResponse & { provider: string } {
-    const transcript = this.cleanTranscript(dto.currentBody || dto.transcript);
-    const tone = dto.tone || this.detectLocalTone(transcript);
-    const language = dto.language && dto.language !== 'auto' ? dto.language : 'unknown';
-    return {
-      language,
-      tone,
-      intent: 'email_draft',
-      subject: '',
-      body: transcript,
-      suggestedRecipient: '',
-      provider: 'local-placeholder',
-    };
+  private async repairReply(
+    apiKey: string,
+    model: string,
+    dto: GenerateReplyDto,
+    subject: string,
+    cleanedInstruction: string,
+    previousReply: { subject: string; body: string; tone: string; language: string } | null,
+    issues: string[],
+  ) {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: [
+              REFORMULATION_RULES,
+              'Write a complete professional reply. The original email is context only and the reply instruction is the sole source for claims made on behalf of the user.',
+              'Do not quote or append the original email.',
+              'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
+            ].join(' '),
+          },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              task: REPAIR_INSTRUCTION,
+              originalEmail: dto.originalEmail,
+              cleanedReplyInstruction: cleanedInstruction,
+              expectedSubject: subject,
+              requestedTone: dto.tone || 'auto',
+              customTone: dto.customTone,
+              previousReply,
+              qualityIssues: issues,
+            }),
+          },
+        ],
+      }),
+    });
+    if (!response.ok) throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
+    const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    try {
+      const value = this.parseJson(json.choices?.[0]?.message?.content || '{}');
+      const repaired = {
+        subject,
+        body: this.polishBody(String(value.body || '')),
+        tone: this.normalizeTone(value.tone || dto.tone),
+        language: String(value.language || dto.language || 'auto'),
+      };
+      if (this.replyQualityIssues(repaired.body, cleanedInstruction).length > 0) {
+        throw new Error('Repaired reply failed validation');
+      }
+      this.logger.log(`generatedBodyLength=${repaired.body.length} retryUsed=yes type=reply`);
+      return repaired;
+    } catch {
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
+    }
   }
 
   private normalizeDraft(value: any, dto: GenerateEmailDto): GeneratedEmailResponse {
@@ -186,7 +272,7 @@ export class AiService implements AiProvider {
       language: String(value.language || dto.language || 'unknown'),
       tone: this.normalizeTone(value.tone || dto.tone),
       intent: String(value.intent || 'email_draft'),
-      subject: this.polishSubject(String(value.subject || 'Votre e-mail')),
+      subject: this.polishSubject(String(value.subject || '')),
       body: this.polishBody(String(value.body || '')),
       suggestedRecipient: String(value.suggestedRecipient || ''),
     };
@@ -197,7 +283,7 @@ export class AiService implements AiProvider {
     model: string,
     dto: GenerateEmailDto,
     cleanedTranscript: string,
-    draft: GeneratedEmailResponse,
+    draft: GeneratedEmailResponse | null,
     issues: string[],
   ) {
     const messages: GroqMessage[] = [
@@ -205,7 +291,7 @@ export class AiService implements AiProvider {
       {
         role: 'user',
         content: JSON.stringify({
-          task: 'Improve the draft and fix every quality issue while preserving intent.',
+          task: REPAIR_INSTRUCTION,
           cleanedTranscript,
           currentBody: dto.currentBody,
           requestedTone: dto.tone,
@@ -225,11 +311,25 @@ export class AiService implements AiProvider {
         response_format: { type: 'json_object' },
       }),
     });
-    if (!response.ok) return draft;
+    if (!response.ok) {
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
+    }
     const json = (await response.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
-    return this.normalizeDraft(this.parseJson(json.choices?.[0]?.message?.content || '{}'), dto);
+    try {
+      const repaired = this.normalizeDraft(
+        this.parseJson(json.choices?.[0]?.message?.content || '{}'),
+        dto,
+      );
+      if (this.qualityIssues(repaired, cleanedTranscript).length > 0) {
+        throw new Error('Repaired output failed validation');
+      }
+      this.logger.log(`generatedBodyLength=${repaired.body.length} retryUsed=yes`);
+      return repaired;
+    } catch {
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
+    }
   }
 
   private cleanTranscript(input: string) {
@@ -278,12 +378,22 @@ export class AiService implements AiProvider {
       .join('\n\n');
   }
 
-  private qualityIssues(draft: GeneratedEmailResponse) {
+  private qualityIssues(draft: GeneratedEmailResponse, transcript: string) {
     const issues: string[] = [];
-    if (draft.subject.length < 6 || draft.subject.split(/\s+/).length < 2) {
+    if (!draft.subject) issues.push('The subject is empty.');
+    else if (draft.subject.length < 6 || draft.subject.split(/\s+/).length < 2)
       issues.push('The subject is vague or too short.');
-    }
     if (draft.subject.length > 100) issues.push('The subject is too long.');
+    if (!draft.body) issues.push('The body is empty.');
+    const normalizedBody = this.normalizeForComparison(draft.body);
+    const normalizedTranscript = this.normalizeForComparison(transcript);
+    if (normalizedBody && normalizedBody === normalizedTranscript) {
+      issues.push('The body is the raw transcript.');
+    }
+    const minimumBodyLength = Math.min(180, Math.max(40, Math.floor(transcript.length * 0.85)));
+    if (draft.body.length < minimumBodyLength) {
+      issues.push('The body is too short compared with the transcript.');
+    }
     if (/\b(?:euh|heu|hum|hmm|um|uh|erm)\b/i.test(draft.body)) {
       issues.push('Speech fillers remain in the body.');
     }
@@ -294,7 +404,38 @@ export class AiService implements AiProvider {
     if (new Set(sentences).size !== sentences.length) {
       issues.push('The body contains duplicated sentences.');
     }
+    if (transcript.length >= 35 && sentences.length <= 1 && draft.body.length < 120) {
+      issues.push('The body is only one short sentence.');
+    }
     return issues;
+  }
+
+  private replyQualityIssues(body: string, instruction: string) {
+    const issues: string[] = [];
+    if (!body) issues.push('The reply body is empty.');
+    if (this.normalizeForComparison(body) === this.normalizeForComparison(instruction)) {
+      issues.push('The reply body is the raw transcript.');
+    }
+    const minimumBodyLength = Math.min(160, Math.max(35, Math.floor(instruction.length * 0.8)));
+    if (body.length < minimumBodyLength) {
+      issues.push('The reply body is too short.');
+    }
+    const sentences = body
+      .split(/[.!?]+/)
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length > 12);
+    if (instruction.length >= 35 && sentences.length <= 1 && body.length < 110) {
+      issues.push('The reply body is only one short sentence.');
+    }
+    return issues;
+  }
+
+  private normalizeForComparison(value: string) {
+    return value
+      .normalize('NFKC')
+      .toLocaleLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim();
   }
 
   private parseJson(content: string): any {
@@ -322,13 +463,5 @@ export class AiService implements AiProvider {
     if (!isSupportedLanguageInput(language)) {
       throw new BadRequestException(unsupportedLanguageResponse);
     }
-  }
-
-  private detectLocalTone(transcript: string) {
-    const lower = transcript.toLowerCase();
-    if (lower.includes('stage') || lower.includes('student')) return 'student';
-    if (lower.includes('administration') || lower.includes('document')) return 'administrative';
-    if (lower.includes('cher') || lower.includes('hello')) return 'friendly';
-    return 'professional';
   }
 }

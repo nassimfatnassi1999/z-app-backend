@@ -19,6 +19,17 @@ export class GenerateReplyDto {
 
   @IsOptional() @IsString() language?: string;
   @IsOptional()
-  @IsIn(['professional', 'administrative', 'friendly', 'student', 'formal', 'business'])
+  @IsIn([
+    'auto',
+    'professional',
+    'administrative',
+    'friendly',
+    'student',
+    'formal',
+    'business',
+    'custom',
+  ])
   tone?: string;
+
+  @IsOptional() @IsString() customTone?: string;
 }
