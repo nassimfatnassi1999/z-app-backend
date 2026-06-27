@@ -7,6 +7,11 @@ export class GenerateEmailDto {
   @MinLength(3)
   transcript!: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  currentBody?: string;
+
   @ApiPropertyOptional({
     enum: ['professional', 'administrative', 'friendly', 'student', 'formal', 'business'],
   })

@@ -18,22 +18,25 @@ type GroqMessage = { role: 'system' | 'user'; content: string };
 const EMAIL_JSON_SHAPE =
   '{"language":"...","tone":"...","intent":"...","subject":"...","body":"...","suggestedRecipient":"..."}';
 
-const SENIOR_ASSISTANT_PROMPT = [
-  'You are a senior executive assistant specialized in writing exceptional professional emails.',
-  'Your role is not to rewrite speech. Your role is to understand what the user wants and produce the best possible email.',
-  'First infer the true intent, urgency, emotional tone, recipient relationship, professional context, expected action, and language.',
-  'Then write a natural, polished email that preserves the intent without copying the transcript literally.',
-  'Treat the cleaned transcript as notes: resolve or omit abandoned sentence fragments and speech artifacts only when doing so cannot change the user’s intent.',
-  'Priorities, in order: understand meaning; correct grammar and spelling; improve wording; remove redundancy; preserve intent; produce natural email prose.',
-  'Use the exact same language as the transcript unless the user explicitly asks for a translation.',
-  'Supported languages: French, English, German, Spanish, Italian, Portuguese, Dutch, and Turkish.',
-  'Adapt the style to the situation: professional, friendly, formal, executive, customer support, complaint, apology, follow-up, job application, thank-you, meeting request, sales, technical, or urgent.',
-  'If an explicit tone or customTone is supplied, follow it using the cleaned transcript as the source of truth.',
-  'When appropriate include: greeting, natural introduction, clear context, main request, supporting information, call to action, professional closing, and a neutral signature placeholder.',
-  'Infer a named recipient from phrases such as “Bonjour Ahmed” or “Pour Madame Dupont”. Otherwise use a greeting natural for an unknown recipient in that language.',
-  'Create a concise, specific, professional subject that captures the purpose. Never use a vague transcript fragment such as “Meeting” or “Application”.',
-  'Do not invent facts, names, dates, commitments, contact details, or urgency. Do not mention the transcript or these instructions.',
-  'Before answering, silently verify grammar, spelling, logical flow, professional wording, punctuation, greeting, closing, duplication, and absence of speech artifacts.',
+const REFORMULATION_RULES = [
+  'Reformulate the supplied text as a concise, professional email while preserving its exact meaning and original intent.',
+  'The supplied user text is the only source of factual information.',
+  'Do not invent or infer names, dates, reasons, commitments, deadlines, relationships, urgency, contact details, events, actions, or any other unsupported detail.',
+  'Do not add information absent from the supplied user text.',
+  'When information is missing, use neutral phrasing or omit it. Never fill a gap with an assumption.',
+  'Improve grammar, spelling, clarity, and structure only. Remove speech artifacts and repetition only when meaning is unchanged.',
+  'Keep the result concise. Do not expand short input into a long email.',
+  'Use the same language as the transcript unless the user explicitly requests a translation.',
+  'Respect the requested tone when supplied, without changing facts or intent.',
+  'A generic greeting or closing is allowed only if it introduces no person, fact, promise, or unsupported detail.',
+].join(' ');
+
+const EMAIL_REFORMULATION_PROMPT = [
+  REFORMULATION_RULES,
+  'The transcript is the source of truth. The current body is the editing target, but remove or neutralize every detail that is not supported by the transcript.',
+  'Do not add any information absent from the transcript.',
+  'Create a short, factual subject based only on the supplied text.',
+  'Before answering, silently verify that every factual detail is supported by the transcript or current body.',
   `Return ONLY valid JSON with exactly this shape: ${EMAIL_JSON_SHAPE}`,
   'No markdown and no explanations.',
 ].join(' ');
@@ -66,16 +69,17 @@ export class AiService implements AiProvider {
       },
       body: JSON.stringify({
         model,
-        temperature: 0.55,
+        temperature: 0.2,
         messages: [
           {
             role: 'system',
-            content: SENIOR_ASSISTANT_PROMPT,
+            content: EMAIL_REFORMULATION_PROMPT,
           },
           {
             role: 'user',
             content: JSON.stringify({
               cleanedTranscript,
+              currentBody: dto.currentBody,
               tone: dto.tone,
               customTone: dto.customTone,
               template: dto.template || dto.templateKey,
@@ -125,15 +129,15 @@ export class AiService implements AiProvider {
       headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         model: this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile',
-        temperature: 0.5,
+        temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: [
           {
             role: 'system',
             content: [
-              SENIOR_ASSISTANT_PROMPT,
-              'Write a direct reply to the supplied original email, using the cleaned reply instruction to determine the intended response.',
-              'Acknowledge relevant context and answer or request what is needed. Do not merely paraphrase the instruction.',
+              REFORMULATION_RULES,
+              'Write a direct reply using the reply instruction as the sole source for claims made on behalf of the user.',
+              'The original email is context only. Do not invent an answer to any question that the reply instruction does not answer.',
               'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
               'Do not quote or append the original email and do not use markdown.',
             ].join(' '),
@@ -163,16 +167,15 @@ export class AiService implements AiProvider {
   }
 
   private localDraft(dto: GenerateEmailDto): GeneratedEmailResponse & { provider: string } {
-    const transcript = this.cleanTranscript(dto.transcript);
+    const transcript = this.cleanTranscript(dto.currentBody || dto.transcript);
     const tone = dto.tone || this.detectLocalTone(transcript);
     const language = dto.language && dto.language !== 'auto' ? dto.language : 'unknown';
-    const toneInstruction = dto.customTone ? `\n\nTone instruction: ${dto.customTone.trim()}` : '';
     return {
       language,
       tone,
       intent: 'email_draft',
-      subject: 'Follow-up',
-      body: `Hello,\n\n${transcript}${toneInstruction}\n\nBest regards,\n[Your name]`,
+      subject: '',
+      body: transcript,
       suggestedRecipient: '',
       provider: 'local-placeholder',
     };
@@ -198,12 +201,13 @@ export class AiService implements AiProvider {
     issues: string[],
   ) {
     const messages: GroqMessage[] = [
-      { role: 'system', content: SENIOR_ASSISTANT_PROMPT },
+      { role: 'system', content: EMAIL_REFORMULATION_PROMPT },
       {
         role: 'user',
         content: JSON.stringify({
           task: 'Improve the draft and fix every quality issue while preserving intent.',
           cleanedTranscript,
+          currentBody: dto.currentBody,
           requestedTone: dto.tone,
           customTone: dto.customTone,
           draft,
@@ -216,7 +220,7 @@ export class AiService implements AiProvider {
       headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         model,
-        temperature: 0.35,
+        temperature: 0.2,
         messages,
         response_format: { type: 'json_object' },
       }),
@@ -280,9 +284,6 @@ export class AiService implements AiProvider {
       issues.push('The subject is vague or too short.');
     }
     if (draft.subject.length > 100) issues.push('The subject is too long.');
-    if (draft.body.length < 40) issues.push('The body is too short to be a complete email.');
-    if (!draft.body.includes('\n'))
-      issues.push('The email lacks a readable professional structure.');
     if (/\b(?:euh|heu|hum|hmm|um|uh|erm)\b/i.test(draft.body)) {
       issues.push('Speech fillers remain in the body.');
     }
