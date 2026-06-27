@@ -9,6 +9,7 @@ import { UsersModule } from './modules/users/users.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { MailboxModule } from './modules/mailbox/mailbox.module';
 import { HealthController } from './health.controller';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { HealthController } from './health.controller';
     UsersModule,
     ConversationsModule,
     MailboxModule,
+    NotificationsModule,
   ],
   controllers: [HealthController],
 })

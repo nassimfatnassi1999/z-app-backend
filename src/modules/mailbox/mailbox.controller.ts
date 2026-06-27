@@ -40,6 +40,41 @@ export class MailboxController {
     return this.mailbox.unreadCount(req.user.userId);
   }
 
+  @Get('counts')
+  counts(@Req() req: AuthRequest) {
+    return this.mailbox.counts(req.user.userId);
+  }
+
+  @Get('inbox')
+  inbox(@Req() req: AuthRequest, @Query('q') q = '') {
+    return this.mailbox.list(req.user.userId, 'inbox', q);
+  }
+
+  @Get('sent')
+  sent(@Req() req: AuthRequest, @Query('q') q = '') {
+    return this.mailbox.list(req.user.userId, 'sent', q);
+  }
+
+  @Get('drafts')
+  drafts(@Req() req: AuthRequest, @Query('q') q = '') {
+    return this.mailbox.list(req.user.userId, 'drafts', q);
+  }
+
+  @Get('unread')
+  unread(@Req() req: AuthRequest, @Query('q') q = '') {
+    return this.mailbox.list(req.user.userId, 'unread', q);
+  }
+
+  @Get('trash')
+  trash(@Req() req: AuthRequest, @Query('q') q = '') {
+    return this.mailbox.list(req.user.userId, 'trash', q);
+  }
+
+  @Get('favorites')
+  favorites(@Req() req: AuthRequest, @Query('q') q = '') {
+    return this.mailbox.list(req.user.userId, 'favorites', q);
+  }
+
   @Post()
   send(@Req() req: AuthRequest, @Body() dto: SendEmailDto) {
     return this.mailbox.send(req.user.userId, dto);

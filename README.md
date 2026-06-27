@@ -135,3 +135,14 @@ Server events:
 - `conversation:updated`
 - `typing:update`
 - `message:read`
+
+## Internal email push notifications
+
+The authenticated device endpoints are `POST /notifications/devices`, `DELETE
+/notifications/devices/:token`, `GET /notifications/settings`, and `PATCH
+/notifications/settings`. Configure Firebase Admin with either the three
+`FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` values,
+or `FIREBASE_SERVICE_ACCOUNT_JSON_BASE64`. Missing or temporarily failing
+Firebase never blocks internal email creation. Invalid FCM tokens are revoked.
+
+`GET /mailbox/counts` supplies inbox-unread, unread, draft, and trash badges.

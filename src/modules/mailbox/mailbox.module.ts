@@ -6,9 +6,10 @@ import { MailboxController } from './mailbox.controller';
 import { MailboxEvents } from './mailbox.events';
 import { MailboxGateway } from './mailbox.gateway';
 import { MailboxService } from './mailbox.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule, JwtModule.register({}), ConfigModule],
+  imports: [PrismaModule, JwtModule.register({}), ConfigModule, NotificationsModule],
   controllers: [MailboxController],
   providers: [MailboxService, MailboxGateway, MailboxEvents],
 })

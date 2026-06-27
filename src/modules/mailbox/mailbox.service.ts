@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { SendEmailDto } from './dto/send-email.dto';
 import { MailboxEvents } from './mailbox.events';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type MailboxFolder = 'inbox' | 'sent' | 'drafts' | 'trash' | 'favorites' | 'unread';
 
@@ -15,6 +16,7 @@ export class MailboxService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: MailboxEvents,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async list(userId: string, folder: MailboxFolder = 'inbox', q = '') {
@@ -58,6 +60,17 @@ export class MailboxService {
     };
   }
 
+  async counts(userId: string) {
+    const [inboxUnread, drafts, trash] = await Promise.all([
+      this.prisma.email.count({ where: { recipientId: userId, read: false, deleted: false } }),
+      this.prisma.emailDraft.count({ where: { userId, status: 'draft' } }),
+      this.prisma.email.count({
+        where: { deleted: true, OR: [{ senderId: userId }, { recipientId: userId }] },
+      }),
+    ]);
+    return { inboxUnread, unread: inboxUnread, drafts, trash };
+  }
+
   async send(userId: string, dto: SendEmailDto) {
     if (userId === dto.recipientId) {
       throw new BadRequestException('Cannot send an email to yourself');
@@ -84,6 +97,13 @@ export class MailboxService {
       'email:new',
       this.serializeEmail(email, dto.recipientId),
     );
+    await this.notifications.sendNewEmail({
+      recipientId: dto.recipientId,
+      senderId: userId,
+      senderName: email.sender.name,
+      emailId: email.id,
+      subject: email.subject,
+    });
     return serialized;
   }
 
