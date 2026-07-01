@@ -13,6 +13,7 @@ import {
   SupportedSpeechLanguage,
   unsupportedLanguageResponse,
 } from './languageMap';
+import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 
 type DeepgramResponse = {
   results?: {
@@ -60,7 +61,7 @@ export class SpeechService implements SpeechProvider {
   constructor(private readonly config: ConfigService) {}
 
   async transcribe(file: any, selectedLanguage = 'auto'): Promise<TranscriptResponse> {
-    const mime = this.normalizeMime(file.mimetype, file.originalname);
+    const mime = this.detectMime(file.buffer, this.normalizeMime(file.mimetype, file.originalname));
     const normalizedSelection = selectedLanguage.trim().toLowerCase() || 'auto';
     const deepgramLanguage = this.deepgramLanguageFor(normalizedSelection);
     const deepgramOptions = this.buildDeepgramOptions(deepgramLanguage);
@@ -82,14 +83,15 @@ export class SpeechService implements SpeechProvider {
     this.debug('Deepgram request started');
     const params = new URLSearchParams(deepgramOptions);
 
-    const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Token ${apiKey}`,
-        'content-type': mime,
+    const response = await fetchWithTimeout(
+      `https://api.deepgram.com/v1/listen?${params.toString()}`,
+      {
+        method: 'POST',
+        headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
+        body: file.buffer as unknown as BodyInit,
       },
-      body: file.buffer as unknown as BodyInit,
-    });
+      { timeoutMs: 30_000, retries: 1, errorMessage: 'Deepgram transcription failed' },
+    );
 
     if (!response.ok) {
       const body = await response.text();
@@ -177,6 +179,21 @@ export class SpeechService implements SpeechProvider {
     if (lower.endsWith('.webm')) return 'audio/webm';
     if (lower.endsWith('.mp3') || lower.endsWith('.mpeg')) return 'audio/mpeg';
     return mimetype.toLowerCase();
+  }
+
+  private detectMime(buffer: Buffer | undefined, declaredMime: string) {
+    if (!buffer || buffer.length < 4) throw new BadRequestException('Fichier audio vide.');
+    const ascii = buffer.subarray(0, 12).toString('ascii');
+    if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
+    if (buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'audio/webm';
+    if (ascii.startsWith('ID3') || (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0)) {
+      return 'audio/mpeg';
+    }
+    if (ascii.slice(4, 8) === 'ftyp')
+      return declaredMime === 'audio/m4a' ? 'audio/m4a' : 'audio/mp4';
+    throw new BadRequestException(
+      'Le contenu du fichier ne correspond pas à un format audio supporté.',
+    );
   }
 
   private debug(message: string) {

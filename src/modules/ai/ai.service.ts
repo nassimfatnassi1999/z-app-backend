@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { GenerateEmailDto } from './dto/generate-email.dto';
 import { GenerateReplyDto } from './dto/generate-reply.dto';
 import { isSupportedLanguageInput, unsupportedLanguageResponse } from '../speech/languageMap';
+import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 
 type GeneratedEmailResponse = {
   language: string;
@@ -94,35 +95,39 @@ export class AiService implements AiProvider {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
 
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
+    const response = await fetchWithTimeout(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          messages: [
+            {
+              role: 'system',
+              content: EMAIL_REFORMULATION_PROMPT,
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                cleanedTranscript,
+                currentBody: dto.currentBody,
+                tone: selectedTone,
+                customTone: dto.customTone,
+                template: dto.template || dto.templateKey,
+                language: dto.language,
+              }),
+            },
+          ],
+          response_format: { type: 'json_object' },
+        }),
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [
-          {
-            role: 'system',
-            content: EMAIL_REFORMULATION_PROMPT,
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              cleanedTranscript,
-              currentBody: dto.currentBody,
-              tone: selectedTone,
-              customTone: dto.customTone,
-              template: dto.template || dto.templateKey,
-              language: dto.language,
-            }),
-          },
-        ],
-        response_format: { type: 'json_object' },
-      }),
-    });
+      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+    );
 
     if (!response.ok) {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
@@ -164,38 +169,42 @@ export class AiService implements AiProvider {
     if (!apiKey || apiKey.startsWith('REPLACE_WITH')) {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: [
-              REFORMULATION_RULES,
-              'Write a direct reply using the reply instruction as the sole source for claims made on behalf of the user.',
-              'The original email is context only. Do not invent an answer to any question that the reply instruction does not answer.',
-              'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
-              'Do not quote or append the original email and do not use markdown.',
-            ].join(' '),
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              originalEmail: dto.originalEmail,
-              cleanedReplyInstruction: cleanedInstruction,
-              language: dto.language,
-              tone,
-              customTone: dto.customTone,
-              expectedSubject: subject,
-            }),
-          },
-        ],
-      }),
-    });
+    const response = await fetchWithTimeout(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: [
+                REFORMULATION_RULES,
+                'Write a direct reply using the reply instruction as the sole source for claims made on behalf of the user.',
+                'The original email is context only. Do not invent an answer to any question that the reply instruction does not answer.',
+                'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
+                'Do not quote or append the original email and do not use markdown.',
+              ].join(' '),
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                originalEmail: dto.originalEmail,
+                cleanedReplyInstruction: cleanedInstruction,
+                language: dto.language,
+                tone,
+                customTone: dto.customTone,
+                expectedSubject: subject,
+              }),
+            },
+          ],
+        }),
+      },
+      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+    );
     if (!response.ok) throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     try {
@@ -228,39 +237,43 @@ export class AiService implements AiProvider {
     previousReply: { subject: string; body: string; tone: string; language: string } | null,
     issues: string[],
   ) {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: [
-              REFORMULATION_RULES,
-              'Write a complete professional reply. The original email is context only and the reply instruction is the sole source for claims made on behalf of the user.',
-              'Do not quote or append the original email.',
-              'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
-            ].join(' '),
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({
-              task: REPAIR_INSTRUCTION,
-              originalEmail: dto.originalEmail,
-              cleanedReplyInstruction: cleanedInstruction,
-              expectedSubject: subject,
-              requestedTone: dto.tone || 'auto',
-              customTone: dto.customTone,
-              previousReply,
-              qualityIssues: issues,
-            }),
-          },
-        ],
-      }),
-    });
+    const response = await fetchWithTimeout(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: [
+                REFORMULATION_RULES,
+                'Write a complete professional reply. The original email is context only and the reply instruction is the sole source for claims made on behalf of the user.',
+                'Do not quote or append the original email.',
+                'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
+              ].join(' '),
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                task: REPAIR_INSTRUCTION,
+                originalEmail: dto.originalEmail,
+                cleanedReplyInstruction: cleanedInstruction,
+                expectedSubject: subject,
+                requestedTone: dto.tone || 'auto',
+                customTone: dto.customTone,
+                previousReply,
+                qualityIssues: issues,
+              }),
+            },
+          ],
+        }),
+      },
+      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+    );
     if (!response.ok) throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     try {
@@ -315,16 +328,20 @@ export class AiService implements AiProvider {
         }),
       },
     ];
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages,
-        response_format: { type: 'json_object' },
-      }),
-    });
+    const response = await fetchWithTimeout(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          temperature: 0.2,
+          messages,
+          response_format: { type: 'json_object' },
+        }),
+      },
+      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+    );
     if (!response.ok) {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }

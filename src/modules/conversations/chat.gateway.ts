@@ -30,7 +30,7 @@ export class ChatGateway implements OnGatewayConnection {
     const token = this.tokenFrom(client);
     try {
       const payload = await this.jwt.verifyAsync<{ sub: string; email: string }>(token, {
-        secret: this.config.get<string>('JWT_ACCESS_SECRET') || 'change_me_access_secret_32_chars',
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
       });
       client.user = { userId: payload.sub, email: payload.email };
     } catch {
@@ -64,6 +64,7 @@ export class ChatGateway implements OnGatewayConnection {
     @MessageBody()
     body: { conversationId: string; content: string; messageType?: 'text' | 'generated_email' },
   ) {
+    this.assertSocketRate(client, 'message', 30);
     const message = await this.conversations.sendMessage(
       this.userId(client),
       body.conversationId,
@@ -83,6 +84,7 @@ export class ChatGateway implements OnGatewayConnection {
     @ConnectedSocket() client: AuthSocket,
     @MessageBody() body: { conversationId: string },
   ) {
+    this.assertSocketRate(client, 'typing', 120);
     await this.conversations.assertParticipant(this.userId(client), body.conversationId);
     client.to(this.room(body.conversationId)).emit('typing:update', {
       conversationId: body.conversationId,
@@ -96,6 +98,7 @@ export class ChatGateway implements OnGatewayConnection {
     @ConnectedSocket() client: AuthSocket,
     @MessageBody() body: { conversationId: string },
   ) {
+    this.assertSocketRate(client, 'typing', 120);
     await this.conversations.assertParticipant(this.userId(client), body.conversationId);
     client.to(this.room(body.conversationId)).emit('typing:update', {
       conversationId: body.conversationId,
@@ -133,5 +136,17 @@ export class ChatGateway implements OnGatewayConnection {
 
   private room(conversationId: string) {
     return `conversation:${conversationId}`;
+  }
+
+  private assertSocketRate(client: Socket, action: string, limit: number) {
+    const now = Date.now();
+    const key = `rate:${action}`;
+    const current = client.data[key] as { count: number; resetAt: number } | undefined;
+    if (!current || current.resetAt <= now) {
+      client.data[key] = { count: 1, resetAt: now + 60_000 };
+      return;
+    }
+    current.count += 1;
+    if (current.count > limit) throw new Error('Socket rate limit exceeded');
   }
 }

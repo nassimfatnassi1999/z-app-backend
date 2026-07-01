@@ -59,24 +59,31 @@ model NotificationSettings {
 }
 
 model Email {
-  id             String    @id @default(uuid())
-  senderId       String
-  recipientId    String
-  subject        String
-  body           String
-  transcript     String?
-  tone           String
-  language       String
-  status         String    @default("sent")
-  read           Boolean   @default(false)
-  deleted        Boolean   @default(false)
-  starred        Boolean   @default(false)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  readAt         DateTime?
-  sentAt         DateTime  @default(now())
-  replyToEmailId String?
-  threadId       String?
+  id               String    @id @default(uuid())
+  senderId         String
+  recipientId      String
+  subject          String
+  body             String
+  transcript       String?
+  tone             String
+  language         String
+  status           String    @default("sent")
+  read             Boolean   @default(false)
+  // Legacy shared flags kept during the compatibility migration. New code uses per-user state.
+  deleted          Boolean   @default(false)
+  starred          Boolean   @default(false)
+  senderDeleted    Boolean   @default(false)
+  recipientDeleted Boolean   @default(false)
+  senderPurged     Boolean   @default(false)
+  recipientPurged  Boolean   @default(false)
+  senderStarred    Boolean   @default(false)
+  recipientStarred Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  readAt           DateTime?
+  sentAt           DateTime  @default(now())
+  replyToEmailId   String?
+  threadId         String?
 
   sender    User    @relation("SentEmails", fields: [senderId], references: [id], onDelete: Cascade)
   recipient User    @relation("ReceivedEmails", fields: [recipientId], references: [id], onDelete: Cascade)
@@ -88,6 +95,8 @@ model Email {
   @@index([recipientId, read])
   @@index([senderId, deleted])
   @@index([recipientId, deleted])
+  @@index([senderId, senderDeleted, createdAt])
+  @@index([recipientId, recipientDeleted, createdAt])
   @@index([threadId, createdAt])
   @@index([replyToEmailId])
 }
@@ -134,6 +143,7 @@ model Conversation {
   createdAt     DateTime                  @default(now())
   updatedAt     DateTime                  @updatedAt
   lastMessageAt DateTime?
+  directKey     String?                   @unique
   participants  ConversationParticipant[]
   messages      Message[]
 

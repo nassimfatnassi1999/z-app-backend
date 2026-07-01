@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ConversationsService {
@@ -17,29 +18,52 @@ export class ConversationsService {
     const target = await this.prisma.user.findUnique({ where: { id: targetUserId } });
     if (!target) throw new NotFoundException('User not found');
 
+    const directKey = this.directKey(currentUserId, targetUserId);
     const existing = await this.prisma.conversation.findFirst({
       where: {
-        type: 'direct',
-        participants: { every: { userId: { in: [currentUserId, targetUserId] } } },
-        AND: [
-          { participants: { some: { userId: currentUserId } } },
-          { participants: { some: { userId: targetUserId } } },
+        OR: [
+          { directKey },
+          {
+            type: 'direct',
+            participants: { every: { userId: { in: [currentUserId, targetUserId] } } },
+            AND: [
+              { participants: { some: { userId: currentUserId } } },
+              { participants: { some: { userId: targetUserId } } },
+            ],
+          },
         ],
       },
       include: this.conversationInclude(currentUserId),
     });
-    if (existing) return this.serializeConversation(existing, currentUserId);
+    if (existing) {
+      if (!existing.directKey) {
+        await this.prisma.conversation.update({ where: { id: existing.id }, data: { directKey } });
+      }
+      return this.serializeConversation(existing, currentUserId, 0);
+    }
 
-    const conversation = await this.prisma.conversation.create({
-      data: {
-        type: 'direct',
-        participants: {
-          create: [{ userId: currentUserId }, { userId: targetUserId }],
+    try {
+      const conversation = await this.prisma.conversation.create({
+        data: {
+          type: 'direct',
+          directKey,
+          participants: {
+            create: [{ userId: currentUserId }, { userId: targetUserId }],
+          },
         },
-      },
-      include: this.conversationInclude(currentUserId),
-    });
-    return this.serializeConversation(conversation, currentUserId);
+        include: this.conversationInclude(currentUserId),
+      });
+      return this.serializeConversation(conversation, currentUserId, 0);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const conversation = await this.prisma.conversation.findUniqueOrThrow({
+          where: { directKey },
+          include: this.conversationInclude(currentUserId),
+        });
+        return this.serializeConversation(conversation, currentUserId, 0);
+      }
+      throw error;
+    }
   }
 
   async list(currentUserId: string) {
@@ -48,7 +72,22 @@ export class ConversationsService {
       include: this.conversationInclude(currentUserId),
       orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
     });
-    return conversations.map((item) => this.serializeConversation(item, currentUserId));
+    const unread = await this.prisma.$queryRaw<Array<{ conversationId: string; count: bigint }>>`
+      SELECT m."conversationId", COUNT(*) AS count
+      FROM "Message" m
+      JOIN "ConversationParticipant" cp
+        ON cp."conversationId" = m."conversationId" AND cp."userId" = ${currentUserId}
+      WHERE m."senderId" <> ${currentUserId}
+        AND m."deletedAt" IS NULL
+        AND (cp."lastReadAt" IS NULL OR m."createdAt" > cp."lastReadAt")
+      GROUP BY m."conversationId"
+    `;
+    const unreadByConversation = new Map(
+      unread.map((row) => [row.conversationId, Number(row.count)]),
+    );
+    return conversations.map((item) =>
+      this.serializeConversation(item, currentUserId, unreadByConversation.get(item.id) ?? 0),
+    );
   }
 
   async messages(currentUserId: string, conversationId: string, page = 1, limit = 30) {
@@ -75,6 +114,7 @@ export class ConversationsService {
     await this.assertParticipant(currentUserId, conversationId);
     const trimmed = content.trim();
     if (!trimmed) throw new BadRequestException('Message content is required');
+    if (trimmed.length > 10000) throw new BadRequestException('Message content is too long');
 
     const message = await this.prisma.$transaction(async (tx) => {
       const created = await tx.message.create({
@@ -148,21 +188,11 @@ export class ConversationsService {
     };
   }
 
-  private serializeConversation(conversation: any, currentUserId: string) {
-    const currentParticipant = conversation.participants.find(
-      (item: any) => item.userId === currentUserId,
-    );
+  private serializeConversation(conversation: any, currentUserId: string, unreadCount: number) {
     const otherParticipant = conversation.participants.find(
       (item: any) => item.userId !== currentUserId,
     );
     const lastMessage = conversation.messages?.[0] ?? null;
-    const unreadCount = lastMessage
-      ? conversation.messages.filter(
-          (message: any) =>
-            message.senderId !== currentUserId &&
-            (!currentParticipant?.lastReadAt || message.createdAt > currentParticipant.lastReadAt),
-        ).length
-      : 0;
     return {
       id: conversation.id,
       type: conversation.type,
@@ -199,5 +229,9 @@ export class ConversationsService {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? '')
       .join();
+  }
+
+  private directKey(firstUserId: string, secondUserId: string) {
+    return [firstUserId, secondUserId].sort().join(':');
   }
 }

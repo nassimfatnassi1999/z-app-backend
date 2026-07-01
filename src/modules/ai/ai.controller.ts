@@ -11,6 +11,8 @@ export class AiController {
   constructor(private readonly ai: AiService) {}
 
   @Post('generate-email')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   generateEmail(@Body() dto: GenerateEmailDto) {
     return this.ai.generateEmail(dto);
   }

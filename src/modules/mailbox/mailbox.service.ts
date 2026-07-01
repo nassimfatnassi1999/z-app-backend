@@ -55,7 +55,13 @@ export class MailboxService {
   async unreadCount(userId: string) {
     return {
       unread: await this.prisma.email.count({
-        where: { recipientId: userId, status: 'sent', read: false, deleted: false },
+        where: {
+          recipientId: userId,
+          status: 'sent',
+          read: false,
+          recipientDeleted: false,
+          recipientPurged: false,
+        },
       }),
     };
   }
@@ -63,11 +69,22 @@ export class MailboxService {
   async counts(userId: string) {
     const [inboxUnread, drafts, trash] = await Promise.all([
       this.prisma.email.count({
-        where: { recipientId: userId, status: 'sent', read: false, deleted: false },
+        where: {
+          recipientId: userId,
+          status: 'sent',
+          read: false,
+          recipientDeleted: false,
+          recipientPurged: false,
+        },
       }),
       this.prisma.emailDraft.count({ where: { userId, status: 'draft' } }),
       this.prisma.email.count({
-        where: { deleted: true, OR: [{ senderId: userId }, { recipientId: userId }] },
+        where: {
+          OR: [
+            { senderId: userId, senderDeleted: true, senderPurged: false },
+            { recipientId: userId, recipientDeleted: true, recipientPurged: false },
+          ],
+        },
       }),
     ]);
     return { inboxUnread, unread: inboxUnread, drafts, trash };
@@ -91,11 +108,13 @@ export class MailboxService {
     }
     const subject = replyTo ? this.replySubject(replyTo.subject) : dto.subject.trim();
     const email = await this.prisma.$transaction(async (tx) => {
+      let transcript: string | undefined;
       if (dto.draftId) {
         const draft = await tx.emailDraft.findFirst({
           where: { id: dto.draftId, userId, status: 'draft' },
         });
         if (!draft) throw new NotFoundException('Draft not found');
+        transcript = draft.transcript;
       }
       const created = await tx.email.create({
         data: {
@@ -105,6 +124,7 @@ export class MailboxService {
           body: dto.body.trim(),
           tone: dto.tone || 'professional',
           language: dto.language || 'unknown',
+          transcript,
           status: 'sent',
           sentAt: new Date(),
           replyToEmailId: replyTo?.id,
@@ -163,20 +183,20 @@ export class MailboxService {
   }
 
   async star(userId: string, id: string, starred: boolean) {
-    await this.findVisibleEmail(userId, id);
+    const email = await this.findVisibleEmail(userId, id);
     const updated = await this.prisma.email.update({
       where: { id },
-      data: { starred },
+      data: email.senderId === userId ? { senderStarred: starred } : { recipientStarred: starred },
       include: this.emailInclude(),
     });
     return this.serializeEmail(updated, userId);
   }
 
   async delete(userId: string, id: string) {
-    await this.findVisibleEmail(userId, id);
+    const email = await this.findVisibleEmail(userId, id);
     const updated = await this.prisma.email.update({
       where: { id },
-      data: { deleted: true, status: 'deleted' },
+      data: email.senderId === userId ? { senderDeleted: true } : { recipientDeleted: true },
       include: this.emailInclude(),
     });
     this.events.emitToUser(userId, 'email:deleted', { id });
@@ -184,29 +204,57 @@ export class MailboxService {
   }
 
   async restore(userId: string, id: string) {
-    await this.findVisibleEmail(userId, id);
+    const email = await this.findVisibleEmail(userId, id);
     const updated = await this.prisma.email.update({
       where: { id },
-      data: { deleted: false, status: 'sent' },
+      data:
+        email.senderId === userId
+          ? { senderDeleted: false, senderPurged: false }
+          : { recipientDeleted: false, recipientPurged: false },
       include: this.emailInclude(),
     });
     return this.serializeEmail(updated, userId);
   }
 
   async removePermanently(userId: string, id: string) {
-    await this.findVisibleEmail(userId, id);
-    await this.prisma.email.delete({ where: { id } });
+    const email = await this.findVisibleEmail(userId, id, true);
+    const ownDeleted = email.senderId === userId ? email.senderDeleted : email.recipientDeleted;
+    if (!ownDeleted)
+      throw new BadRequestException('Email must be in trash before permanent removal');
+    const otherPurged = email.senderId === userId ? email.recipientPurged : email.senderPurged;
+    if (otherPurged) {
+      await this.prisma.email.delete({ where: { id } });
+    } else {
+      await this.prisma.email.update({
+        where: { id },
+        data: email.senderId === userId ? { senderPurged: true } : { recipientPurged: true },
+      });
+    }
     return { success: true };
   }
 
   async emptyTrash(userId: string) {
-    const result = await this.prisma.email.deleteMany({
+    const emails = await this.prisma.email.findMany({
       where: {
-        deleted: true,
-        OR: [{ senderId: userId }, { recipientId: userId }],
+        OR: [
+          { senderId: userId, senderDeleted: true, senderPurged: false },
+          { recipientId: userId, recipientDeleted: true, recipientPurged: false },
+        ],
       },
+      select: { id: true, senderId: true, senderPurged: true, recipientPurged: true },
     });
-    return { deleted: result.count };
+    await this.prisma.$transaction(
+      emails.map((email) => {
+        const otherPurged = email.senderId === userId ? email.recipientPurged : email.senderPurged;
+        return otherPurged
+          ? this.prisma.email.delete({ where: { id: email.id } })
+          : this.prisma.email.update({
+              where: { id: email.id },
+              data: email.senderId === userId ? { senderPurged: true } : { recipientPurged: true },
+            });
+      }),
+    );
+    return { deleted: emails.length };
   }
 
   private async listDrafts(userId: string, q: string) {
@@ -253,26 +301,59 @@ export class MailboxService {
   private folderWhere(userId: string, folder: MailboxFolder) {
     switch (folder) {
       case 'sent':
-        return { senderId: userId, status: 'sent', deleted: false };
+        return { senderId: userId, status: 'sent', senderDeleted: false, senderPurged: false };
       case 'trash':
-        return { deleted: true, OR: [{ senderId: userId }, { recipientId: userId }] };
+        return {
+          OR: [
+            { senderId: userId, senderDeleted: true, senderPurged: false },
+            { recipientId: userId, recipientDeleted: true, recipientPurged: false },
+          ],
+        };
       case 'favorites':
         return {
-          starred: true,
-          deleted: false,
-          OR: [{ senderId: userId }, { recipientId: userId }],
+          OR: [
+            {
+              senderId: userId,
+              senderStarred: true,
+              senderDeleted: false,
+              senderPurged: false,
+            },
+            {
+              recipientId: userId,
+              recipientStarred: true,
+              recipientDeleted: false,
+              recipientPurged: false,
+            },
+          ],
         };
       case 'unread':
-        return { recipientId: userId, status: 'sent', read: false, deleted: false };
+        return {
+          recipientId: userId,
+          status: 'sent',
+          read: false,
+          recipientDeleted: false,
+          recipientPurged: false,
+        };
       case 'inbox':
       default:
-        return { recipientId: userId, status: 'sent', deleted: false };
+        return {
+          recipientId: userId,
+          status: 'sent',
+          recipientDeleted: false,
+          recipientPurged: false,
+        };
     }
   }
 
-  private async findVisibleEmail(userId: string, id: string) {
+  private async findVisibleEmail(userId: string, id: string, includePurged = false) {
     const email = await this.prisma.email.findFirst({
-      where: { id, OR: [{ senderId: userId }, { recipientId: userId }] },
+      where: {
+        id,
+        OR: [
+          { senderId: userId, ...(includePurged ? {} : { senderPurged: false }) },
+          { recipientId: userId, ...(includePurged ? {} : { recipientPurged: false }) },
+        ],
+      },
       include: this.emailInclude(),
     });
     if (!email) throw new NotFoundException('Email not found');
@@ -287,6 +368,7 @@ export class MailboxService {
   }
 
   private serializeEmail(email: any, currentUserId: string, includeTranscript = false) {
+    const isSender = email.senderId === currentUserId;
     const result: Record<string, unknown> = {
       id: email.id,
       subject: email.subject,
@@ -296,8 +378,8 @@ export class MailboxService {
       status: email.status,
       draft: email.status === 'draft',
       read: email.read,
-      deleted: email.deleted,
-      starred: email.starred,
+      deleted: isSender ? email.senderDeleted : email.recipientDeleted,
+      starred: isSender ? email.senderStarred : email.recipientStarred,
       createdAt: email.createdAt,
       updatedAt: email.updatedAt,
       readAt: email.readAt,
@@ -307,8 +389,8 @@ export class MailboxService {
       sender: this.serializeUser(email.sender),
       recipient: this.serializeUser(email.recipient),
       preview: email.body.slice(0, 140),
-      aiGenerated: Boolean(email.transcript || email.tone),
-      direction: email.senderId === currentUserId ? 'sent' : 'received',
+      aiGenerated: Boolean(email.transcript),
+      direction: isSender ? 'sent' : 'received',
     };
     if (includeTranscript) result.transcript = email.transcript;
     return result;

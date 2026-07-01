@@ -1,6 +1,7 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MailProvider, VerificationEmailParams } from './mail.interface';
+import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 
 @Injectable()
 export class BrevoProvider implements MailProvider {
@@ -16,21 +17,22 @@ export class BrevoProvider implements MailProvider {
       throw new ServiceUnavailableException('Brevo mail configuration is missing');
     }
 
-    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: {
-        'api-key': apiKey,
-        'content-type': 'application/json',
+    const response = await fetchWithTimeout(
+      'https://api.brevo.com/v3/smtp/email',
+      {
+        method: 'POST',
+        headers: { 'api-key': apiKey, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sender: { name: fromName, email: fromEmail },
+          to: [{ email: params.to, name: params.name }],
+          replyTo: replyTo ? { email: replyTo } : undefined,
+          subject: 'Votre code de vérification Z',
+          htmlContent: this.htmlTemplate(params),
+          textContent: this.textTemplate(params),
+        }),
       },
-      body: JSON.stringify({
-        sender: { name: fromName, email: fromEmail },
-        to: [{ email: params.to, name: params.name }],
-        replyTo: replyTo ? { email: replyTo } : undefined,
-        subject: 'Votre code de vérification Z',
-        htmlContent: this.htmlTemplate(params),
-        textContent: this.textTemplate(params),
-      }),
-    });
+      { timeoutMs: 15_000, retries: 0, errorMessage: 'Unable to send verification email' },
+    );
 
     if (!response.ok) {
       throw new ServiceUnavailableException('Unable to send verification email');
@@ -60,7 +62,7 @@ export class BrevoProvider implements MailProvider {
             <h1 style="margin: 0 0 8px; color: #2563eb;">Z</h1>
             <p style="margin: 0 0 24px;">Parlez. Z rédige.</p>
             <h2>Votre code de vérification</h2>
-            <p>Bonjour${params.name ? ` ${params.name}` : ''},</p>
+            <p>Bonjour${params.name ? ` ${this.escapeHtml(params.name)}` : ''},</p>
             <p>Entrez ce code dans Z pour vérifier votre adresse e-mail.</p>
             <div style="font-size: 32px; font-weight: 700; letter-spacing: 6px; padding: 16px; background: #f3f4f6; text-align: center; border-radius: 8px;">
               ${params.code}
@@ -71,5 +73,16 @@ export class BrevoProvider implements MailProvider {
         </body>
       </html>
     `;
+  }
+
+  private escapeHtml(value: string) {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;',
+    };
+    return value.replace(/[&<>'"]/g, (character) => entities[character]);
   }
 }

@@ -32,7 +32,7 @@ export class MailboxGateway implements OnGatewayConnection, OnGatewayInit {
     const token = this.tokenFrom(client);
     try {
       const payload = await this.jwt.verifyAsync<{ sub: string; email: string }>(token, {
-        secret: this.config.get<string>('JWT_ACCESS_SECRET') || 'change_me_access_secret_32_chars',
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
       });
       client.user = { userId: payload.sub, email: payload.email };
       await client.join(this.events.room(payload.sub));

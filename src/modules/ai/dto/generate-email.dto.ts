@@ -1,15 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class GenerateEmailDto {
   @ApiProperty()
   @IsString()
   @MinLength(3)
+  @MaxLength(20000)
   transcript!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(50000)
   currentBody?: string;
 
   @ApiPropertyOptional({
@@ -52,11 +54,13 @@ export class GenerateEmailDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   customTone?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   template?: string;
 
   @ApiPropertyOptional()

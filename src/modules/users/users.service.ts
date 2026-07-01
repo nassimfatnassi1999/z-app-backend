@@ -19,6 +19,7 @@ export class UsersService {
 
   async search(currentUserId: string, q: string) {
     const query = q.trim().toLowerCase();
+    if (query.length > 100) throw new BadRequestException('Search query is too long');
     if (query.length < 2) return [];
     const users = await this.prisma.user.findMany({
       where: {
@@ -41,6 +42,7 @@ export class UsersService {
   async checkEmail(currentUserId: string, raw: string) {
     const email = raw.trim().toLowerCase();
     if (!email) throw new BadRequestException('Email is required');
+    if (email.length > 320) throw new BadRequestException('Email is too long');
     const user = await this.prisma.user.findUnique({
       where: { email },
       select: { id: true, name: true, email: true },

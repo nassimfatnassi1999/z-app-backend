@@ -9,6 +9,7 @@ export class RegisterDto {
   @ApiProperty({ example: 'Z Developer' })
   @IsString()
   @MinLength(2)
+  @MaxLength(100)
   name!: string;
 
   @ApiProperty({ example: 'z_dev' })
@@ -21,5 +22,6 @@ export class RegisterDto {
   @ApiProperty({ minLength: 8 })
   @IsString()
   @MinLength(8)
+  @MaxLength(128)
   password!: string;
 }

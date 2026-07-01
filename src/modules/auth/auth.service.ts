@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { createHmac, randomInt } from 'crypto';
+import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { LoginDto } from './dto/login.dto';
@@ -97,7 +97,7 @@ export class AuthService {
     }
 
     const codeHash = this.hashVerificationCode(dto.code);
-    if (codeHash !== code.codeHash) {
+    if (!this.secureHashEquals(codeHash, code.codeHash)) {
       await this.prisma.emailVerificationCode.update({
         where: { id: code.id },
         data: { attempts: { increment: 1 } },
@@ -132,8 +132,7 @@ export class AuthService {
   async refresh(refreshToken: string) {
     try {
       const payload = await this.jwt.verifyAsync<{ sub: string; email: string }>(refreshToken, {
-        secret:
-          this.config.get<string>('JWT_REFRESH_SECRET') || 'change_me_refresh_secret_32_chars',
+        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
       });
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
@@ -232,8 +231,16 @@ export class AuthService {
   }
 
   private hashVerificationCode(code: string) {
-    const secret = this.config.get<string>('EMAIL_CODE_SECRET') || 'change_me_long_random_secret';
+    const secret = this.config.getOrThrow<string>('EMAIL_CODE_SECRET');
     return createHmac('sha256', secret).update(code).digest('hex');
+  }
+
+  private secureHashEquals(actual: string, expected: string) {
+    const actualBuffer = Buffer.from(actual, 'hex');
+    const expectedBuffer = Buffer.from(expected, 'hex');
+    return (
+      actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
+    );
   }
 
   private codeTtlMinutes() {
@@ -252,15 +259,14 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync(
       { sub: userId, email },
       {
-        secret: this.config.get<string>('JWT_ACCESS_SECRET') || 'change_me_access_secret_32_chars',
+        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
         expiresIn: '15m',
       },
     );
     const refreshToken = await this.jwt.signAsync(
       { sub: userId, email },
       {
-        secret:
-          this.config.get<string>('JWT_REFRESH_SECRET') || 'change_me_refresh_secret_32_chars',
+        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
         expiresIn: '30d',
       },
     );
