@@ -23,6 +23,18 @@ type GroqMessage = { role: 'system' | 'user'; content: string };
 const EMAIL_JSON_SHAPE =
   '{"language":"...","tone":"...","intent":"...","subject":"...","body":"...","suggestedRecipient":"..."}';
 
+const DETECTABLE_TONES = [
+  'professional',
+  'friendly',
+  'urgent',
+  'formal',
+  'direct',
+  'apology',
+  'follow_up',
+  'complaint',
+  'information_request',
+] as const;
+
 const REFORMULATION_RULES = [
   'You are a senior executive assistant. Transform the supplied transcript into a complete, polished professional email while preserving its exact meaning and original intent.',
   'The supplied user text is the only source of factual information.',
@@ -34,7 +46,9 @@ const REFORMULATION_RULES = [
   'Include a suitable greeting, context, request or action, and closing when appropriate, without inventing a recipient name or sender identity.',
   'Keep the result concise but complete. Do not expand short input into a long email.',
   'Use the same language as the transcript unless the user explicitly requests a translation.',
-  'When tone is auto or omitted, detect the best tone. Otherwise respect the requested tone without changing facts or intent.',
+  `When tone is auto or omitted, analyze the meaning and classify the dominant tone or intention as exactly one of: ${DETECTABLE_TONES.join(', ')}. Use that classification to write the email, and return it in the tone field.`,
+  'Interpret professional as neutral workplace communication, friendly as warm and conversational, urgent as time-sensitive, formal as ceremonious or highly respectful, direct as short and action-oriented, apology as acknowledging fault or inconvenience, follow_up as a reminder or status check, complaint as reporting dissatisfaction or a problem, and information_request as asking for facts or clarification.',
+  'Base the classification on meaning and context, not on isolated keywords. Otherwise respect the requested tone without changing facts or intent.',
   'A generic greeting or closing is allowed only if it introduces no person, fact, promise, or unsupported detail.',
 ].join(' ');
 
@@ -447,15 +461,11 @@ export class AiService implements AiProvider {
   }
 
   private normalizeTone(value?: string) {
-    const tone = String(value || '').toLowerCase();
-    const allowed = new Set([
-      'professional',
-      'administrative',
-      'friendly',
-      'student',
-      'formal',
-      'business',
-    ]);
+    const tone = String(value || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[\s-]+/g, '_');
+    const allowed = new Set([...DETECTABLE_TONES, 'administrative', 'student', 'business']);
     return allowed.has(tone) ? tone : 'professional';
   }
 

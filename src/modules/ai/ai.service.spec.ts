@@ -53,6 +53,19 @@ describe('AiService email quality validation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['urgent', 'direct', 'apology', 'follow_up', 'complaint', 'information_request'])(
+    'preserves the automatically detected %s classification',
+    async (tone) => {
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(groqResponse(JSON.stringify({ ...completeEmail, tone })));
+
+      const result = await service().generateEmail({ transcript, tone: 'auto' });
+
+      expect(result.tone).toBe(tone);
+    },
+  );
+
   it('retries once when Groq returns the raw transcript', async () => {
     const weakEmail = {
       ...completeEmail,
