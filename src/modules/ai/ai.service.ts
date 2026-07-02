@@ -26,6 +26,9 @@ const EMAIL_JSON_SHAPE =
 
 const DETECTABLE_TONES = [
   'professional',
+  'administrative',
+  'business',
+  'student',
   'friendly',
   'urgent',
   'formal',
@@ -48,8 +51,9 @@ const REFORMULATION_RULES = [
   'Keep the result concise but complete. Do not expand short input into a long email.',
   'Use the same language as the transcript unless the user explicitly requests a translation.',
   `When tone is auto or omitted, analyze the meaning and classify the dominant tone or intention as exactly one of: ${DETECTABLE_TONES.join(', ')}. Use that classification to write the email, and return it in the tone field.`,
-  'Interpret professional as neutral workplace communication, friendly as warm and conversational, urgent as time-sensitive, formal as ceremonious or highly respectful, direct as short and action-oriented, apology as acknowledging fault or inconvenience, follow_up as a reminder or status check, complaint as reporting dissatisfaction or a problem, and information_request as asking for facts or clarification.',
+  'Interpret professional as neutral workplace communication, administrative as institutional or procedural, business as commercial or client-oriented, student as academic communication, friendly as warm and conversational, urgent as time-sensitive, formal as ceremonious or highly respectful, direct as short and action-oriented, apology as acknowledging fault or inconvenience, follow_up as a reminder or status check, complaint as reporting dissatisfaction or a problem, and information_request as asking for facts or clarification.',
   'Base the classification on meaning and context, not on isolated keywords. Otherwise respect the requested tone without changing facts or intent.',
+  'When tone is custom, follow customTone as a writing-style instruction while still preserving every fact and the original intent.',
   'A generic greeting or closing is allowed only if it introduces no person, fact, promise, or unsupported detail.',
 ].join(' ');
 
@@ -88,6 +92,9 @@ export class AiService implements AiProvider {
     const apiKey = this.config.get<string>('GROQ_API_KEY');
     const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
     const selectedTone = dto.tone || 'auto';
+    if (selectedTone === 'custom' && !dto.customTone?.trim()) {
+      throw new BadRequestException('customTone is required when tone is custom');
+    }
     this.logger.log(
       `provider=groq model=${model} transcriptLength=${cleanedTranscript.length} tone=${selectedTone}`,
     );
@@ -117,7 +124,7 @@ export class AiService implements AiProvider {
                 cleanedTranscript,
                 currentBody: dto.currentBody,
                 tone: selectedTone,
-                customTone: dto.customTone,
+                customTone: dto.customTone?.trim(),
                 template: dto.template || dto.templateKey,
                 language: dto.language,
               }),
@@ -482,7 +489,8 @@ export class AiService implements AiProvider {
       .toLowerCase()
       .trim()
       .replace(/[\s-]+/g, '_');
-    const allowed = new Set([...DETECTABLE_TONES, 'administrative', 'student', 'business']);
+    if (tone === 'custom') return tone;
+    const allowed = new Set<string>(DETECTABLE_TONES);
     return allowed.has(tone) ? tone : 'professional';
   }
 

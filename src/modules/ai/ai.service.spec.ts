@@ -53,7 +53,20 @@ describe('AiService email quality validation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['urgent', 'direct', 'apology', 'follow_up', 'complaint', 'information_request'])(
+  it.each([
+    'professional',
+    'administrative',
+    'business',
+    'student',
+    'friendly',
+    'urgent',
+    'formal',
+    'direct',
+    'apology',
+    'follow_up',
+    'complaint',
+    'information_request',
+  ])(
     'preserves the automatically detected %s classification',
     async (tone) => {
       jest
@@ -65,6 +78,32 @@ describe('AiService email quality validation', () => {
       expect(result.tone).toBe(tone);
     },
   );
+
+  it('requires an instruction for a custom tone', async () => {
+    await expect(
+      service().generateEmail({ transcript, tone: 'custom', customTone: '  ' }),
+    ).rejects.toMatchObject({
+      message: 'customTone is required when tone is custom',
+    });
+  });
+
+  it('sends the selected custom instruction to Groq', async () => {
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        groqResponse(JSON.stringify({ ...completeEmail, tone: 'custom' })),
+      );
+
+    const result = await service().generateEmail({
+      transcript,
+      tone: 'custom',
+      customTone: '  plus chaleureux  ',
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(String(request.body)).toContain('plus chaleureux');
+    expect(result.tone).toBe('custom');
+  });
 
   it('retries once when Groq returns the raw transcript', async () => {
     const weakEmail = {
