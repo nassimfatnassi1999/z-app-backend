@@ -66,18 +66,15 @@ describe('AiService email quality validation', () => {
     'follow_up',
     'complaint',
     'information_request',
-  ])(
-    'preserves the automatically detected %s classification',
-    async (tone) => {
-      jest
-        .spyOn(global, 'fetch')
-        .mockResolvedValue(groqResponse(JSON.stringify({ ...completeEmail, tone })));
+  ])('preserves the automatically detected %s classification', async (tone) => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(groqResponse(JSON.stringify({ ...completeEmail, tone })));
 
-      const result = await service().generateEmail({ transcript, tone: 'auto' });
+    const result = await service().generateEmail({ transcript, tone: 'auto' });
 
-      expect(result.tone).toBe(tone);
-    },
-  );
+    expect(result.tone).toBe(tone);
+  });
 
   it('requires an instruction for a custom tone', async () => {
     await expect(
@@ -90,9 +87,7 @@ describe('AiService email quality validation', () => {
   it('sends the selected custom instruction to Groq', async () => {
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValue(
-        groqResponse(JSON.stringify({ ...completeEmail, tone: 'custom' })),
-      );
+      .mockResolvedValue(groqResponse(JSON.stringify({ ...completeEmail, tone: 'custom' })));
 
     const result = await service().generateEmail({
       transcript,
@@ -149,6 +144,38 @@ describe('AiService email quality validation', () => {
   it('never falls back to raw transcript when Groq is not configured', async () => {
     await expect(
       service('').generateEmail({ transcript, language: 'fr', tone: 'auto' }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('expands the existing email without requesting a new email', async () => {
+    const original = 'Bonjour,\n\nLa réunion est prévue vendredi à 10 h.\n\nCordialement,';
+    const expanded =
+      'Bonjour,\n\nJe vous confirme que la réunion est bien prévue vendredi à 10 h. Ce rendez-vous nous permettra ainsi de poursuivre nos échanges dans de bonnes conditions.\n\nCordialement,';
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(groqResponse(JSON.stringify({ email: expanded })));
+
+    const result = await service().expandEmail({
+      email: original,
+      tone: 'professional',
+      language: 'fr',
+      level: 'light',
+    });
+
+    expect(result.email).toBe(expanded);
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(String(request.body)).toContain('about 20%');
+    expect(String(request.body)).toContain('vendredi à 10 h');
+  });
+
+  it('rejects an expansion that does not enrich the existing body', async () => {
+    const original = 'Bonjour, merci de confirmer la réunion de vendredi. Cordialement.';
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(groqResponse(JSON.stringify({ email: original })));
+
+    await expect(
+      service().expandEmail({ email: original, level: 'medium' }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 

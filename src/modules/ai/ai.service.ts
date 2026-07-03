@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { GenerateEmailDto } from './dto/generate-email.dto';
 import { GenerateReplyDto } from './dto/generate-reply.dto';
+import { ExpandEmailDto } from './dto/expand-email.dto';
 import { isSupportedLanguageInput, unsupportedLanguageResponse } from '../speech/languageMap';
 import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 
@@ -156,6 +157,77 @@ export class AiService implements AiProvider {
     }
 
     return this.repairDraft(apiKey, model, dto, cleanedTranscript, draft, issues);
+  }
+
+  async expandEmail(dto: ExpandEmailDto): Promise<{ email: string }> {
+    this.assertSupportedLanguage(dto.language);
+    const email = dto.email.trim();
+    if (email.length < 3) throw new BadRequestException('Email is empty');
+
+    const apiKey = this.config.get<string>('GROQ_API_KEY');
+    const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    if (!apiKey || apiKey.startsWith('REPLACE_WITH')) {
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
+    }
+
+    const level = dto.level || 'medium';
+    const targetGrowth = { light: 'about 20%', medium: 'about 50%', complete: 'about 100%' }[level];
+    this.logger.log(
+      `provider=groq model=${model} emailLength=${email.length} tone=${dto.tone || 'auto'} type=expand level=${level}`,
+    );
+    const response = await fetchWithTimeout(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          temperature: 0.15,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: [
+                'You are an expert business email writer.',
+                `Expand the supplied email by ${targetGrowth} into a richer, more natural, and more professional version.`,
+                'Use the supplied email as the only source of information.',
+                'Preserve exactly the same intent, facts, language, recipient, and requested tone.',
+                'Never invent, infer, alter, or remove facts. Never change names, dates, amounts, places, commitments, or the main subject.',
+                'Only develop ideas already present, improve clarity and wording, and add natural transitions.',
+                'Generic connective wording is allowed only when it adds no new factual claim.',
+                'Return only valid JSON with exactly this shape: {"email":"..."}. No markdown or explanation.',
+              ].join(' '),
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                email,
+                tone: dto.tone || 'auto',
+                language: dto.language || 'unknown',
+                expansionLevel: level,
+              }),
+            },
+          ],
+        }),
+      },
+      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+    );
+    if (!response.ok) throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
+
+    try {
+      const json = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const value = this.parseJson(json.choices?.[0]?.message?.content || '{}');
+      const expanded = this.polishBody(String(value.email || ''));
+      if (!expanded || expanded.length <= email.length) {
+        throw new Error('Expanded email is not longer than its source');
+      }
+      this.logger.log(`generatedBodyLength=${expanded.length} type=expand level=${level}`);
+      return { email: expanded };
+    } catch {
+      throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
+    }
   }
 
   async generateReply(dto: GenerateReplyDto) {

@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AiService } from './ai.service';
 import { GenerateEmailDto } from './dto/generate-email.dto';
 import { GenerateReplyDto } from './dto/generate-reply.dto';
+import { ExpandEmailDto } from './dto/expand-email.dto';
 
 @ApiTags('ai')
 @Controller('ai')
@@ -22,5 +23,12 @@ export class AiController {
   @ApiBearerAuth()
   generateReply(@Body() dto: GenerateReplyDto) {
     return this.ai.generateReply(dto);
+  }
+
+  @Post('email/expand')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  expandEmail(@Body() dto: ExpandEmailDto) {
+    return this.ai.expandEmail(dto);
   }
 }
