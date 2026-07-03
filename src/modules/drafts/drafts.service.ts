@@ -22,6 +22,17 @@ export class DraftsService {
     });
   }
 
+  async update(owner: DraftOwner, id: string, dto: CreateDraftDto) {
+    const draft = await this.prisma.emailDraft.findFirst({
+      where: { id, ...this.ownerWhere(owner), status: 'draft' },
+    });
+    if (!draft) throw new NotFoundException('Draft not found');
+    return this.prisma.emailDraft.update({
+      where: { id },
+      data: dto,
+    });
+  }
+
   async updateStatus(owner: DraftOwner, id: string, status: DraftStatus) {
     const draft = await this.prisma.emailDraft.findFirst({
       where: { id, ...this.ownerWhere(owner) },

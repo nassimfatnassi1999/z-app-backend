@@ -60,6 +60,16 @@ export class DraftsController {
     return this.drafts.updateStatus(this.ownerFrom(req, deviceId), id, dto.status);
   }
 
+  @Patch(':id')
+  update(
+    @Req() req: AuthRequest,
+    @Headers('x-device-id') deviceId: string | undefined,
+    @Param('id') id: string,
+    @Body() dto: CreateDraftDto,
+  ) {
+    return this.drafts.update(this.ownerFrom(req, deviceId), id, dto);
+  }
+
   @Post(':id/duplicate')
   duplicate(
     @Req() req: AuthRequest,
