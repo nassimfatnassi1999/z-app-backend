@@ -159,7 +159,7 @@ describe('AiService email quality validation', () => {
       email: original,
       tone: 'professional',
       language: 'fr',
-      level: 'light',
+      expandLevel: 'light',
     });
 
     expect(result.email).toBe(expanded);
@@ -175,7 +175,7 @@ describe('AiService email quality validation', () => {
       .mockResolvedValue(groqResponse(JSON.stringify({ email: original })));
 
     await expect(
-      service().expandEmail({ email: original, level: 'medium' }),
+      service().expandEmail({ email: original, expandLevel: 'medium' }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 

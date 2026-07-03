@@ -20,8 +20,8 @@ export class ExpandEmailDto {
   @MaxLength(20)
   language?: string;
 
-  @ApiPropertyOptional({ enum: ['light', 'medium', 'complete'], default: 'medium' })
+  @ApiPropertyOptional({ enum: ['light', 'medium', 'full'], default: 'medium' })
   @IsOptional()
-  @IsIn(['light', 'medium', 'complete'])
-  level?: 'light' | 'medium' | 'complete';
+  @IsIn(['light', 'medium', 'full'])
+  expandLevel?: 'light' | 'medium' | 'full';
 }

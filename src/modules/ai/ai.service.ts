@@ -170,8 +170,8 @@ export class AiService implements AiProvider {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
 
-    const level = dto.level || 'medium';
-    const targetGrowth = { light: 'about 20%', medium: 'about 50%', complete: 'about 100%' }[level];
+    const level = dto.expandLevel || 'medium';
+    const targetGrowth = { light: 'about 20%', medium: 'about 50%', full: 'about 100%' }[level];
     this.logger.log(
       `provider=groq model=${model} emailLength=${email.length} tone=${dto.tone || 'auto'} type=expand level=${level}`,
     );
