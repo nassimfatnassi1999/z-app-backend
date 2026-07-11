@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -11,17 +10,12 @@ import { ConversationsModule } from './modules/conversations/conversations.modul
 import { MailboxModule } from './modules/mailbox/mailbox.module';
 import { HealthController } from './health.controller';
 import { NotificationsModule } from './modules/notifications/notifications.module';
-import { validateEnvironment } from './config/environment';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
+import { AppConfigModule } from './config/app-config.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-      expandVariables: true,
-      validate: validateEnvironment,
-    }),
+    AppConfigModule,
     PrismaModule,
     AuthModule,
     AiModule,
