@@ -104,15 +104,14 @@ describe('AiService email quality validation', () => {
     expect(result.tone).toBe('custom');
   });
 
-  it('retries once when Groq returns the raw transcript', async () => {
+  it('does not make a second LLM call for non-blocking quality warnings', async () => {
     const weakEmail = {
       ...completeEmail,
       body: transcript,
     };
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(groqResponse(JSON.stringify(weakEmail)))
-      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)));
+      .mockResolvedValueOnce(groqResponse(JSON.stringify(weakEmail)));
 
     const result = await service().generateEmail({
       transcript,
@@ -120,29 +119,16 @@ describe('AiService email quality validation', () => {
       tone: 'auto',
     });
 
-    expect(result.body).toBe(completeEmail.body);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.body).toBe(transcript);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('retries invalid JSON, then returns a clear error for another weak output', async () => {
-    jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(groqResponse('not-json'))
-      .mockResolvedValueOnce(
-        groqResponse(
-          JSON.stringify({
-            ...completeEmail,
-            subject: '',
-            body: 'Congé vendredi.',
-          }),
-        ),
-      );
+  it('returns a local degraded draft when Groq JSON is invalid', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(groqResponse('not-json'));
 
-    await expect(
-      service().generateEmail({ transcript, language: 'fr', tone: 'auto' }),
-    ).rejects.toMatchObject({
-      message: 'Impossible de générer l’email pour le moment.',
-    });
+    const result = await service().generateEmail({ transcript, language: 'fr', tone: 'auto' });
+    expect(result.degradedMode).toBe(true);
+    expect(result.body).toContain(transcript);
   });
 
   it('never falls back to raw transcript when Groq is not configured', async () => {

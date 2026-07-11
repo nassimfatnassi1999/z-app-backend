@@ -5,14 +5,24 @@ import { GeneratedEmailResponse, TranscriptAnalysis } from './ai.types';
 export class EmailValidationService {
   validate(
     draft: GeneratedEmailResponse,
+    _transcript: string,
+    _analysis: TranscriptAnalysis,
+  ): string[] {
+    const issues: string[] = [];
+    if (!draft.subject) issues.push('Missing subject');
+    if (!draft.body) issues.push('Missing body');
+    return issues;
+  }
+
+  warnings(
+    draft: GeneratedEmailResponse,
     transcript: string,
     analysis: TranscriptAnalysis,
   ): string[] {
     const issues: string[] = [];
-    if (!draft.subject) issues.push('Missing subject');
     if (draft.subject.split(/\s+/).length > 8) issues.push('Subject exceeds 8 words');
     if (/^(?:email|message|objet|sans objet)$/i.test(draft.subject)) issues.push('Generic subject');
-    if (!draft.body || draft.body.length < 30) issues.push('Missing or incomplete body');
+    if (draft.body.length < 30) issues.push('Body is unusually short');
     if (this.normal(draft.body) === this.normal(transcript))
       issues.push('Body merely repeats transcript');
     const paragraphs = draft.body.split(/\n\s*\n/).filter((value) => value.trim());

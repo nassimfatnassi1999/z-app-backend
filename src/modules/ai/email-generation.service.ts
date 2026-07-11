@@ -60,7 +60,16 @@ export class EmailGenerationService {
     const facts = this.extractFacts(transcript);
     let previous: Record<string, any> | null = null;
     let issues = ['Initial generation was not attempted'];
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    this.logger.log(
+      JSON.stringify({
+        event: 'AI_GENERATION_START',
+        requestId,
+        transcriptLength: transcript.length,
+        model: this.model,
+        hasApiKey: Boolean(key),
+      }),
+    );
+    for (let attempt = 0; attempt < 1; attempt += 1) {
       const generationStarted = performance.now();
       try {
         previous = await this.call(
@@ -93,6 +102,11 @@ export class EmailGenerationService {
               ...draft.timings,
             }),
           );
+          const warnings = this.validation.warnings(draft, transcript, analysis);
+          if (warnings.length)
+            this.logger.warn(
+              JSON.stringify({ event: 'ai_validation_warnings', requestId, warnings }),
+            );
           return draft;
         }
         this.logger.warn(
@@ -124,12 +138,45 @@ export class EmailGenerationService {
         );
       }
     }
-    throw new AiPipelineException(
-      'AI_INVALID_RESPONSE',
-      true,
-      requestId,
-      `Local validation failed: ${issues.join('; ')}`,
+    const fallback = this.localFallback(transcript, dto, requestId, started);
+    this.logger.warn(JSON.stringify({ event: 'ai_local_fallback', requestId, issues }));
+    return fallback;
+  }
+
+  async diagnose(text: string): Promise<{ raw: string; model: string }> {
+    const requestId = randomUUID();
+    const key = this.config.get<string>('GROQ_API_KEY') || '';
+    const response = await fetchWithTimeout(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          temperature: 0.2,
+          max_completion_tokens: 600,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Tu rédiges des emails professionnels. Retourne uniquement un JSON valide avec subject et body.',
+            },
+            { role: 'user', content: text },
+          ],
+        }),
+      },
+      { timeoutMs: 18_000, retries: 0, errorMessage: 'Groq diagnostic failed' },
     );
+    const json = (await response.json()) as any;
+    const raw = String(json.choices?.[0]?.message?.content || '');
+    if (!response.ok || !raw)
+      throw new AiPipelineException(
+        'AI_GENERATION_FAILED',
+        true,
+        requestId,
+        `Diagnostic Groq HTTP ${response.status}`,
+      );
+    return { raw, model: String(json.model || this.model) };
   }
 
   private get model() {
@@ -157,7 +204,6 @@ export class EmailGenerationService {
             temperature: 0.3,
             top_p: 0.9,
             max_completion_tokens: 2200,
-            response_format: { type: 'json_object' },
             messages,
           }),
         },
@@ -289,6 +335,42 @@ export class EmailGenerationService {
       references: unique(
         transcript.match(/\b(?:réf(?:érence)?|ref)\s*[:#-]?\s*[A-Z0-9-]+\b/giu) || [],
       ),
+    };
+  }
+
+  private localFallback(
+    transcript: string,
+    dto: GenerateEmailDto,
+    requestId: string,
+    started: number,
+  ): GeneratedEmailResponse {
+    const subject =
+      transcript
+        .replace(/[.!?]+/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .slice(0, 8)
+        .join(' ') || 'Message';
+    return {
+      language: dto.language || 'fr',
+      tone: dto.tone && dto.tone !== 'auto' ? dto.tone : 'professional',
+      intent: 'email_draft',
+      subject,
+      body: `Bonjour,\n\n${transcript}\n\nCordialement,`,
+      suggestedRecipient: '',
+      confidence: 0.4,
+      generationConfidence: 0.4,
+      validationScore: 0.5,
+      emailType: 'other',
+      detectedTone: 'professional',
+      detectedLanguage: dto.language || 'fr',
+      requestId,
+      degradedMode: true,
+      timings: {
+        generationMs: 0,
+        validationMs: 0,
+        totalMs: Math.round(performance.now() - started),
+      },
     };
   }
 }

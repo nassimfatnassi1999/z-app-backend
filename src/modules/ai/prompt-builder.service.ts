@@ -9,12 +9,11 @@ export class PromptBuilderService {
       {
         role: 'system',
         content: [
-          'You are a senior professional email assistant. In one operation, understand the voice transcript, extract its facts, and write a natural directly sendable email.',
-          'Preserve every name, date, time, amount, location, company and reference. Never invent or remove facts. Correct speech errors, remove repetition, reorganize ideas, and add only fact-neutral transitions.',
-          `emailType must be one of: ${EMAIL_TYPES.join(', ')}.`,
-          'The subject must be specific and at most 8 words. The body needs an appropriate greeting, coherent content, and closing, but never an invented signature.',
-          'Return JSON only with: subject, body, intent, emailType, detectedTone, detectedLanguage, suggestedRecipient, confidence, extractedFacts.',
-          'extractedFacts must contain arrays people, dates, times, amounts, locations, references. confidence must be between 0 and 1.',
+          "Tu es un assistant spécialisé dans la rédaction d'emails.",
+          'Transforme la transcription en un email naturel et directement envoyable.',
+          "Conserve tous les noms, dates, heures, montants et lieux. Corrige la grammaire, organise clairement les idées et n'invente aucun fait.",
+          'Utilise la langue de la transcription.',
+          'Retourne uniquement un objet JSON valide avec exactement deux champs obligatoires : subject et body.',
         ].join(' '),
       },
       {

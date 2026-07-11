@@ -13,6 +13,11 @@ async function bootstrap() {
   const config = app.get(ConfigService);
   const port = config.get<number>('PORT', 3000);
   const production = config.get<string>('NODE_ENV') === 'production';
+  console.log('[GROQ_CONFIG]', {
+    hasApiKey: Boolean(config.get<string>('GROQ_API_KEY')?.trim()),
+    model: config.get<string>('GROQ_MODEL'),
+    analysisModel: config.get<string>('GROQ_ANALYSIS_MODEL'),
+  });
   const allowedOrigins = (config.get<string>('CORS_ORIGINS') || '')
     .split(',')
     .map((origin) => origin.trim())

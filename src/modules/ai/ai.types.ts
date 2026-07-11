@@ -57,6 +57,7 @@ export interface GeneratedEmailResponse {
   generationConfidence: number;
   validationScore: number;
   requestId: string;
+  degradedMode?: boolean;
   timings: { generationMs: number; validationMs: number; totalMs: number };
 }
 
