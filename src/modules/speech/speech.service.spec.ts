@@ -7,6 +7,24 @@ describe('SpeechService audio and Deepgram normalization', () => {
   const normalize = (json: object, language: any = null) =>
     (service as any).normalizeDeepgram(json, language);
   const detect = (buffer: Buffer, mime = 'audio/mp4') => (service as any).detectMime(buffer, mime);
+  const options = (language?: any) => (service as any).buildDeepgramOptions(language);
+  const providerLanguage = (language: string) => (service as any).deepgramLanguageFor(language);
+
+  it.each([
+    ['fr', 'fr'],
+    ['en', 'en'],
+    ['ar', 'ar'],
+  ])('maps %s to provider language %s', (input, expected) => {
+    expect(providerLanguage(input)).toBe(expected);
+  });
+  it('enables detection without forcing a language in auto mode', () => {
+    expect(options(providerLanguage('auto'))).toMatchObject({ detect_language: 'true' });
+    expect(options(providerLanguage('auto'))).not.toHaveProperty('language');
+  });
+  it('forces manual language without enabling detection', () => {
+    expect(options(providerLanguage('fr'))).toMatchObject({ language: 'fr' });
+    expect(options(providerLanguage('fr'))).not.toHaveProperty('detect_language');
+  });
 
   it('rejects an empty audio file', () =>
     expect(() => detect(Buffer.alloc(0))).toThrow(BadRequestException));

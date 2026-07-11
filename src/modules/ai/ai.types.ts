@@ -57,6 +57,11 @@ export interface GeneratedEmailResponse {
   generationConfidence: number;
   validationScore: number;
   requestId: string;
+  speechLanguageMode?: string;
+  detectedSpeechLanguage?: string;
+  requestedOutputLanguage?: string;
+  effectiveOutputLanguage?: string;
+  speechConfidence?: number | null;
   degradedMode?: boolean;
   timings: { generationMs: number; validationMs: number; totalMs: number };
 }

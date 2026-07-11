@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  languageMap,
+  mapSpeechLanguageForProvider,
   isSupportedLanguageInput,
   normalizeLanguageCode,
   NormalizedSpeechLanguage,
@@ -36,6 +36,8 @@ type DeepgramResponse = {
 type TranscriptResponse = {
   transcript: string;
   language: NormalizedSpeechLanguage;
+  speechLanguageMode?: string;
+  detectedSpeechLanguage?: NormalizedSpeechLanguage;
   confidence: number | null;
   duration: number;
 };
@@ -83,6 +85,9 @@ export class SpeechService implements SpeechProvider {
         declaredMime: file.mimetype || 'unknown',
         detectedMime: mime,
         requestedLanguage: normalizedSelection,
+        providerLanguage: deepgramOptions.language,
+        detectLanguage: deepgramOptions.detect_language,
+        model: deepgramOptions.model,
       }),
     );
 
@@ -140,7 +145,12 @@ export class SpeechService implements SpeechProvider {
       normalized.confidence < 0.55
         ? 'unknown'
         : normalized.language;
-    const result = { ...normalized, language: finalLanguage };
+    const result = {
+      ...normalized,
+      language: finalLanguage,
+      speechLanguageMode: normalizedSelection,
+      detectedSpeechLanguage: finalLanguage,
+    };
     this.debug(
       JSON.stringify({
         event: 'stt_completed',
@@ -155,8 +165,8 @@ export class SpeechService implements SpeechProvider {
     );
     if (!result.transcript)
       throw new BadRequestException({
-        code: 'STT_NO_SPEECH',
-        message: 'Aucune voix détectée. Parlez plus près du microphone puis réessayez.',
+        code: 'STT_EMPTY_TRANSCRIPT',
+        message: 'Le fournisseur a retourné une transcription vide.',
         retryable: true,
         requestId,
       });
@@ -185,7 +195,9 @@ export class SpeechService implements SpeechProvider {
   }
 
   private buildDeepgramOptions(language?: SupportedSpeechLanguage): DeepgramOptions {
-    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-2-general';
+    // Whisper is the common denominator for automatic detection and every
+    // language exposed by the mobile selector, including Arabic.
+    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'whisper';
     const options: DeepgramOptions = {
       model,
       smart_format: 'true',
@@ -204,7 +216,7 @@ export class SpeechService implements SpeechProvider {
 
   private deepgramLanguageFor(language: string): SupportedSpeechLanguage | undefined {
     if (isSupportedLanguageInput(language) && language !== 'unknown') {
-      return languageMap[language];
+      return mapSpeechLanguageForProvider(language as import('./languageMap').SpeechLanguageMode);
     }
     throw new BadRequestException(unsupportedLanguageResponse);
   }

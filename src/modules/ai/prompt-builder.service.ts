@@ -5,6 +5,7 @@ import { EMAIL_TYPES, GeneratedEmailResponse, GroqMessage, TranscriptAnalysis } 
 @Injectable()
 export class PromptBuilderService {
   fastPath(transcript: string, dto: GenerateEmailDto, extractedFacts: object): GroqMessage[] {
+    const effectiveOutputLanguage = dto.effectiveOutputLanguage || dto.language || 'en';
     return [
       {
         role: 'system',
@@ -12,7 +13,8 @@ export class PromptBuilderService {
           "Tu es un assistant spécialisé dans la rédaction d'emails.",
           'Transforme la transcription en un email naturel et directement envoyable.',
           "Conserve tous les noms, dates, heures, montants et lieux. Corrige la grammaire, organise clairement les idées et n'invente aucun fait.",
-          'Utilise la langue de la transcription.',
+          `La langue obligatoire de l'email final est : ${effectiveOutputLanguage}.`,
+          `Generate the complete email only in: ${effectiveOutputLanguage}.`,
           'Retourne uniquement un objet JSON valide avec exactement deux champs obligatoires : subject et body.',
         ].join(' '),
       },
@@ -109,7 +111,9 @@ export class PromptBuilderService {
 
   private context(dto: GenerateEmailDto) {
     return {
-      detectedLanguage: dto.language || 'auto',
+      detectedLanguage: dto.detectedSpeechLanguage || dto.language || 'auto',
+      speechLanguageMode: dto.speechLanguageMode || 'auto',
+      requestedOutputLanguage: dto.requestedOutputLanguage,
       recipientName: dto.recipientName,
       relationship: dto.relationship,
       requestedTone: dto.tone || 'auto',

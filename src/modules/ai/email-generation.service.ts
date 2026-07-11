@@ -10,6 +10,7 @@ import { EmailValidationService } from './email-validation.service';
 import { InvalidGroqJsonError, parseGroqJson } from './groq-json-parser';
 import { PromptBuilderService } from './prompt-builder.service';
 import { TranscriptCleanerService } from './transcript-cleaner.service';
+import { detectRequestedOutputLanguage, resolveEffectiveOutputLanguage } from './language-context';
 
 type LocalFacts = {
   people: string[];
@@ -41,6 +42,29 @@ export class EmailGenerationService {
         retryable: false,
         requestId,
       });
+    const speechLanguageMode = dto.speechLanguageMode || 'auto';
+    const transcriptRequestedLanguage = detectRequestedOutputLanguage(transcript);
+    const explicitlyRequestedOutputLanguage = dto.requestedOutputLanguage;
+    const detectedSpeechLanguage = dto.detectedSpeechLanguage || dto.language;
+    const effectiveOutputLanguage = resolveEffectiveOutputLanguage({
+      requestedOutputLanguage: explicitlyRequestedOutputLanguage,
+      transcriptRequestedLanguage,
+      detectedSpeechLanguage,
+      speechLanguageMode,
+      appLanguage: dto.appLanguage,
+    });
+    dto.effectiveOutputLanguage = effectiveOutputLanguage;
+    this.logger.debug(
+      JSON.stringify({
+        event: 'LANGUAGE_PIPELINE',
+        speechLanguageMode,
+        detectedSpeechLanguage,
+        requestedOutputLanguage: explicitlyRequestedOutputLanguage,
+        transcriptRequestedLanguage,
+        effectiveOutputLanguage,
+        transcriptLength: transcript.length,
+      }),
+    );
     if (dto.tone === 'custom' && !dto.customTone?.trim())
       throw new BadRequestException({
         code: 'AI_INVALID_RESPONSE',
@@ -107,7 +131,13 @@ export class EmailGenerationService {
             this.logger.warn(
               JSON.stringify({ event: 'ai_validation_warnings', requestId, warnings }),
             );
-          return draft;
+          return this.withLanguageContext(draft, {
+            speechLanguageMode,
+            detectedSpeechLanguage,
+            requestedOutputLanguage: explicitlyRequestedOutputLanguage,
+            effectiveOutputLanguage,
+            speechConfidence: dto.speechConfidence,
+          });
         }
         this.logger.warn(
           JSON.stringify({
@@ -140,7 +170,13 @@ export class EmailGenerationService {
     }
     const fallback = this.localFallback(transcript, dto, requestId, started);
     this.logger.warn(JSON.stringify({ event: 'ai_local_fallback', requestId, issues }));
-    return fallback;
+    return this.withLanguageContext(fallback, {
+      speechLanguageMode,
+      detectedSpeechLanguage,
+      requestedOutputLanguage: explicitlyRequestedOutputLanguage,
+      effectiveOutputLanguage,
+      speechConfidence: dto.speechConfidence,
+    });
   }
 
   async diagnose(text: string): Promise<{ raw: string; model: string }> {
@@ -266,7 +302,8 @@ export class EmailGenerationService {
       ? (rawType as EmailType)
       : 'other';
     return {
-      language: String(value.detectedLanguage || dto.language || 'unknown'),
+      language:
+        dto.effectiveOutputLanguage || String(value.detectedLanguage || dto.language || 'en'),
       intent: String(value.intent || 'email_draft'),
       emailType,
       recipient: String(value.suggestedRecipient || dto.recipientName || ''),
@@ -352,18 +389,18 @@ export class EmailGenerationService {
         .slice(0, 8)
         .join(' ') || 'Message';
     return {
-      language: dto.language || 'fr',
+      language: dto.effectiveOutputLanguage || dto.language || 'en',
       tone: dto.tone && dto.tone !== 'auto' ? dto.tone : 'professional',
       intent: 'email_draft',
       subject,
-      body: `Bonjour,\n\n${transcript}\n\nCordialement,`,
+      body: transcript,
       suggestedRecipient: '',
       confidence: 0.4,
       generationConfidence: 0.4,
       validationScore: 0.5,
       emailType: 'other',
       detectedTone: 'professional',
-      detectedLanguage: dto.language || 'fr',
+      detectedLanguage: dto.detectedSpeechLanguage || dto.language || 'unknown',
       requestId,
       degradedMode: true,
       timings: {
@@ -372,5 +409,18 @@ export class EmailGenerationService {
         totalMs: Math.round(performance.now() - started),
       },
     };
+  }
+
+  private withLanguageContext(
+    response: GeneratedEmailResponse,
+    context: {
+      speechLanguageMode: string;
+      detectedSpeechLanguage?: string;
+      requestedOutputLanguage?: string;
+      effectiveOutputLanguage: string;
+      speechConfidence?: number;
+    },
+  ): GeneratedEmailResponse {
+    return { ...response, ...context };
   }
 }
