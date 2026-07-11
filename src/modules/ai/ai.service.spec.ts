@@ -5,6 +5,7 @@ import { EmailGenerationService } from './email-generation.service';
 import { EmailValidationService } from './email-validation.service';
 import { PromptBuilderService } from './prompt-builder.service';
 import { TranscriptCleanerService } from './transcript-cleaner.service';
+import { AIAnalysisService } from './ai-analysis.service';
 
 const transcript =
   'Je veux envoyer un mail à mon responsable pour demander un congé vendredi prochain pour raison personnelle.';
@@ -37,7 +38,43 @@ describe('AiService email quality validation', () => {
     const prompts = new PromptBuilderService();
     const cleaner = new TranscriptCleanerService();
     const validation = new EmailValidationService();
-    const generation = new EmailGenerationService(config, cleaner, prompts, validation);
+    const analysis = {
+      analyze: jest.fn().mockResolvedValue({
+        model: 'test-model',
+        fallbackUsed: false,
+        analysis: {
+          sourceLanguage: 'fr',
+          outputLanguage: 'fr',
+          outputLanguageSource: 'detected_language',
+          emailType: 'leave_request',
+          mainIntent: 'Demander un congé',
+          recipient: {
+            name: null,
+            role: 'responsable',
+            organization: null,
+            relationship: 'manager',
+          },
+          sender: { name: null, role: null, organization: null },
+          tone: 'professional',
+          requestedLength: 'medium',
+          subjectGoal: 'Demande de congé',
+          facts: [],
+          dates: [],
+          amounts: [],
+          locations: [],
+          actionRequested: 'Accorder le congé',
+          deadline: null,
+          attachmentsMentioned: [],
+          constraints: [],
+          sensitiveDetails: [],
+          ambiguousDetails: [],
+          missingCriticalInformation: [],
+          mustNotInvent: [],
+          confidence: 0.9,
+        },
+      }),
+    } as unknown as AIAnalysisService;
+    const generation = new EmailGenerationService(config, cleaner, prompts, validation, analysis);
     return new AiService(config, generation);
   }
 
@@ -55,6 +92,23 @@ describe('AiService email quality validation', () => {
     expect(result.subject).toBe(completeEmail.subject);
     expect(result.body).toContain('Je souhaite solliciter un congé');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses Llama only after the configured primary model fails', async () => {
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(groqResponse('{}', false))
+      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)));
+
+    const result = await service().generateEmail({ transcript, language: 'fr', tone: 'auto' });
+    const models = fetchMock.mock.calls.map(
+      (call) => JSON.parse(String((call[1] as RequestInit).body)).model,
+    );
+    expect(models).toEqual(['test-model', 'llama-3.3-70b-versatile']);
+    expect(result.metadata).toMatchObject({
+      fallbackUsed: true,
+      actualGroqModelUsed: 'llama-3.3-70b-versatile',
+    });
   });
 
   it.each([
@@ -123,12 +177,15 @@ describe('AiService email quality validation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('returns a local degraded draft when Groq JSON is invalid', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValueOnce(groqResponse('not-json'));
+  it('returns a controlled error when Groq JSON is invalid', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(groqResponse('not-json'))
+      .mockResolvedValueOnce(groqResponse('still-not-json'));
 
-    const result = await service().generateEmail({ transcript, language: 'fr', tone: 'auto' });
-    expect(result.degradedMode).toBe(true);
-    expect(result.body).toContain(transcript);
+    await expect(
+      service().generateEmail({ transcript, language: 'fr', tone: 'auto' }),
+    ).rejects.toMatchObject({ code: 'AI_INVALID_RESPONSE' });
   });
 
   it('never falls back to raw transcript when Groq is not configured', async () => {

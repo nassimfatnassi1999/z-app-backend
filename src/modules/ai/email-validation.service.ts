@@ -1,23 +1,32 @@
 import { Injectable } from '@nestjs/common';
-import { GeneratedEmailResponse, TranscriptAnalysis } from './ai.types';
+import { EmailIntentAnalysis, GeneratedEmailResponse } from './ai.types';
 
 @Injectable()
 export class EmailValidationService {
   validate(
     draft: GeneratedEmailResponse,
-    _transcript: string,
-    _analysis: TranscriptAnalysis,
+    transcript: string,
+    _analysis: EmailIntentAnalysis,
   ): string[] {
     const issues: string[] = [];
     if (!draft.subject) issues.push('Missing subject');
     if (!draft.body) issues.push('Missing body');
+    if (/```|\{\s*"(?:subject|body)"/i.test(draft.body))
+      issues.push('Markdown or JSON leaked into body');
+    if (/\b(?:Groq|Deepgram|transcription|application Z)\b/i.test(draft.body))
+      issues.push('Internal technology leaked into body');
+    const placeholders =
+      draft.body.match(/\[(?:Votre nom|Nom du destinataire|Entreprise|Date|Objet)\]/gi) || [];
+    for (const placeholder of placeholders)
+      if (!transcript.toLocaleLowerCase().includes(placeholder.toLocaleLowerCase()))
+        issues.push(`Invented placeholder: ${placeholder}`);
     return issues;
   }
 
   warnings(
     draft: GeneratedEmailResponse,
     transcript: string,
-    analysis: TranscriptAnalysis,
+    analysis: EmailIntentAnalysis,
   ): string[] {
     const issues: string[] = [];
     if (draft.subject.split(/\s+/).length > 8) issues.push('Subject exceeds 8 words');
@@ -33,12 +42,11 @@ export class EmailValidationService {
       .filter((v) => v.length > 10);
     if (new Set(sentences).size !== sentences.length) issues.push('Repeated sentence');
     const facts = [
-      ...analysis.people,
+      ...analysis.facts,
       ...analysis.dates,
-      ...analysis.times,
       ...analysis.amounts,
-      ...analysis.places,
-      ...analysis.references,
+      ...analysis.locations,
+      ...analysis.attachmentsMentioned,
     ];
     for (const fact of facts)
       if (!this.normal(draft.subject + ' ' + draft.body).includes(this.normal(fact)))

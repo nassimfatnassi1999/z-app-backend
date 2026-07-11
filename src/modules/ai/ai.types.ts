@@ -1,45 +1,50 @@
 export const EMAIL_TYPES = [
-  'request',
+  'professional_request',
+  'job_application',
+  'leave_request',
   'complaint',
   'follow_up',
-  'reminder',
-  'thanks',
-  'invitation',
-  'report',
-  'confirmation',
-  'cancellation',
+  'meeting_request',
+  'information_request',
+  'thank_you',
   'apology',
-  'support',
-  'sales',
-  'invoice',
-  'hr',
-  'internship',
-  'recruitment',
-  'university',
-  'client',
-  'prospecting',
+  'reminder',
+  'personal',
   'other',
 ] as const;
-
 export type EmailType = (typeof EMAIL_TYPES)[number];
 
-export interface TranscriptAnalysis {
-  language: string;
-  intent: string;
+export const EMAIL_ANALYSIS_PROMPT_VERSION = 'v2.0.0';
+export const EMAIL_GENERATION_PROMPT_VERSION = 'v2.0.0';
+
+export interface EmailIntentAnalysis {
+  sourceLanguage: string;
+  outputLanguage: string;
+  outputLanguageSource: 'explicit_request' | 'user_preference' | 'detected_language' | 'fallback';
   emailType: EmailType;
-  recipient: string;
-  requestedAction: string;
-  people: string[];
-  company: string;
+  mainIntent: string;
+  recipient: {
+    name: string | null;
+    role: string | null;
+    organization: string | null;
+    relationship: string;
+  };
+  sender: { name: string | null; role: string | null; organization: string | null };
+  tone: string;
+  requestedLength: 'very_short' | 'short' | 'medium' | 'detailed';
+  subjectGoal: string;
+  facts: string[];
   dates: string[];
-  times: string[];
   amounts: string[];
-  places: string[];
-  references: string[];
-  priority: 'low' | 'normal' | 'high' | 'urgent';
-  detectedTone: string;
-  formality: 'informal' | 'neutral' | 'formal';
-  importantInformation: string[];
+  locations: string[];
+  actionRequested: string | null;
+  deadline: string | null;
+  attachmentsMentioned: string[];
+  constraints: string[];
+  sensitiveDetails: string[];
+  ambiguousDetails: string[];
+  missingCriticalInformation: string[];
+  mustNotInvent: string[];
   confidence: number;
 }
 
@@ -57,12 +62,25 @@ export interface GeneratedEmailResponse {
   generationConfidence: number;
   validationScore: number;
   requestId: string;
+  warnings: string[];
+  missingInformation: string[];
+  metadata: {
+    model: string;
+    deepgramModel: string;
+    groqPrimaryModel: string;
+    actualGroqModelUsed: string;
+    fallbackUsed: boolean;
+    analysisDurationMs: number;
+    generationDurationMs: number;
+    totalDurationMs: number;
+    analysisPromptVersion: string;
+    generationPromptVersion: string;
+  };
   speechLanguageMode?: string;
   detectedSpeechLanguage?: string;
   requestedOutputLanguage?: string;
   effectiveOutputLanguage?: string;
   speechConfidence?: number | null;
-  degradedMode?: boolean;
   timings: { generationMs: number; validationMs: number; totalMs: number };
 }
 

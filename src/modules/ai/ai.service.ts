@@ -12,6 +12,7 @@ import { isSupportedLanguageInput, unsupportedLanguageResponse } from '../speech
 import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import { EmailGenerationService } from './email-generation.service';
 import { GeneratedEmailResponse } from './ai.types';
+import { resolveGroqModels } from '../../config/ai-models';
 
 const DETECTABLE_TONES = [
   'professional',
@@ -75,7 +76,7 @@ export class AiService implements AiProvider {
     if (email.length < 3) throw new BadRequestException('Email is empty');
 
     const apiKey = this.config.get<string>('GROQ_API_KEY');
-    const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    const model = resolveGroqModels(this.config).primary;
     if (!apiKey || apiKey.startsWith('REPLACE_WITH')) {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
@@ -146,7 +147,7 @@ export class AiService implements AiProvider {
       ? dto.originalEmail.subject.trim()
       : `Re: ${dto.originalEmail.subject.trim()}`;
     const apiKey = this.config.get<string>('GROQ_API_KEY');
-    const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    const model = resolveGroqModels(this.config).primary;
     const tone = dto.tone || 'auto';
     const cleanedInstruction = this.cleanTranscript(dto.replyInstruction);
     if (!cleanedInstruction) {

@@ -5,25 +5,11 @@ import { AiService } from './ai.service';
 import { GenerateEmailDto } from './dto/generate-email.dto';
 import { GenerateReplyDto } from './dto/generate-reply.dto';
 import { ExpandEmailDto } from './dto/expand-email.dto';
-import { EmailGenerationService } from './email-generation.service';
-import { BadRequestException } from '@nestjs/common';
 
 @ApiTags('ai')
 @Controller('ai')
 export class AiController {
-  constructor(
-    private readonly ai: AiService,
-    private readonly emailGeneration: EmailGenerationService,
-  ) {}
-
-  @Post('test-groq')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  testGroq(@Body() body: { text?: string }) {
-    const text = body.text?.trim();
-    if (!text) throw new BadRequestException('text is required');
-    return this.emailGeneration.diagnose(text);
-  }
+  constructor(private readonly ai: AiService) {}
 
   @Post('generate-email')
   @UseGuards(JwtAuthGuard)

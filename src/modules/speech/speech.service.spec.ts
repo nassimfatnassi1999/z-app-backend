@@ -18,8 +18,11 @@ describe('SpeechService audio and Deepgram normalization', () => {
     expect(providerLanguage(input)).toBe(expected);
   });
   it('enables detection without forcing a language in auto mode', () => {
-    expect(options(providerLanguage('auto'))).toMatchObject({ detect_language: 'true' });
-    expect(options(providerLanguage('auto'))).not.toHaveProperty('language');
+    expect(options(providerLanguage('auto'))).toMatchObject({
+      model: 'nova-3',
+      language: 'multi',
+      detect_language: 'true',
+    });
   });
   it('forces manual language without enabling detection', () => {
     expect(options(providerLanguage('fr'))).toMatchObject({ language: 'fr' });

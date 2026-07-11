@@ -32,6 +32,15 @@ export function validateEnvironment(config: Record<string, unknown>) {
   if (!String(config.DATABASE_URL ?? '').trim()) {
     throw new Error('DATABASE_URL is required');
   }
+  for (const name of [
+    'DEEPGRAM_API_KEY',
+    'DEEPGRAM_MODEL',
+    'GROQ_API_KEY',
+    'GROQ_PRIMARY_MODEL',
+    'GROQ_FALLBACK_MODEL',
+  ]) {
+    if (!String(config[name] ?? '').trim()) throw new Error(`${name} is required`);
+  }
   if (config.NODE_ENV === 'production' && config.MAIL_ENABLED !== 'true') {
     throw new Error('MAIL_ENABLED must be true in production');
   }

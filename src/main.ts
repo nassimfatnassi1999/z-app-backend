@@ -7,17 +7,21 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
+import { DEFAULT_DEEPGRAM_MODEL, resolveGroqModels } from './config/ai-models';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
   const port = config.get<number>('PORT', 3000);
   const production = config.get<string>('NODE_ENV') === 'production';
-  console.log('[GROQ_CONFIG]', {
-    hasApiKey: Boolean(config.get<string>('GROQ_API_KEY')?.trim()),
-    model: config.get<string>('GROQ_MODEL'),
-    analysisModel: config.get<string>('GROQ_ANALYSIS_MODEL'),
-  });
+  if (!production) {
+    const groq = resolveGroqModels(config);
+    console.log(
+      `Deepgram model: ${config.get<string>('DEEPGRAM_MODEL') || DEFAULT_DEEPGRAM_MODEL}`,
+    );
+    console.log(`Groq primary model: ${groq.primary}`);
+    console.log(`Groq fallback model: ${groq.fallback}`);
+  }
   const allowedOrigins = (config.get<string>('CORS_ORIGINS') || '')
     .split(',')
     .map((origin) => origin.trim())

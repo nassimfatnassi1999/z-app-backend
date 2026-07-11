@@ -1,129 +1,81 @@
 import { Injectable } from '@nestjs/common';
 import { GenerateEmailDto } from './dto/generate-email.dto';
-import { EMAIL_TYPES, GeneratedEmailResponse, GroqMessage, TranscriptAnalysis } from './ai.types';
+import { EMAIL_TYPES, EmailIntentAnalysis, GroqMessage } from './ai.types';
 
 @Injectable()
 export class PromptBuilderService {
-  fastPath(transcript: string, dto: GenerateEmailDto, extractedFacts: object): GroqMessage[] {
-    const effectiveOutputLanguage = dto.effectiveOutputLanguage || dto.language || 'en';
+  analysis(
+    rawTranscription: string,
+    cleanedTranscription: string,
+    dto: GenerateEmailDto,
+  ): GroqMessage[] {
     return [
       {
         role: 'system',
         content: [
-          "Tu es un assistant spécialisé dans la rédaction d'emails.",
-          'Transforme la transcription en un email naturel et directement envoyable.',
-          "Conserve tous les noms, dates, heures, montants et lieux. Corrige la grammaire, organise clairement les idées et n'invente aucun fait.",
-          `La langue obligatoire de l'email final est : ${effectiveOutputLanguage}.`,
-          `Generate the complete email only in: ${effectiveOutputLanguage}.`,
-          'Retourne uniquement un objet JSON valide avec exactement deux champs obligatoires : subject et body.',
+          'Tu es le moteur d’analyse sémantique de l’application Z. Tu ne rédiges jamais l’email.',
+          'Extrais uniquement les informations présentes ou clairement déductibles. Ne transforme jamais une incertitude en fait et n’invente aucun nom, date, entreprise, poste, pièce jointe, numéro ou délai.',
+          'Identifie intention, destinataire, langues, ton, longueur, noms, dates, montants, lieux, délais et action. Ignore hésitations et répétitions. Place les ambiguïtés et informations essentielles absentes dans les champs dédiés.',
+          `emailType doit appartenir à: ${EMAIL_TYPES.join(', ')}. confidence est entre 0 et 1.`,
+          'Retourne exclusivement un JSON strict avec: sourceLanguage, outputLanguage, outputLanguageSource, emailType, mainIntent, recipient{name,role,organization,relationship}, sender{name,role,organization}, tone, requestedLength, subjectGoal, facts, dates, amounts, locations, actionRequested, deadline, attachmentsMentioned, constraints, sensitiveDetails, ambiguousDetails, missingCriticalInformation, mustNotInvent, confidence.',
+          'Exemples condensés: congé avec dates => leave_request et dates exactes; candidature sans entreprise => job_application et entreprise manquante; réclamation sans référence => complaint et référence manquante; français demandant English => sourceLanguage fr, outputLanguage en, outputLanguageSource explicit_request.',
+          'Aucun Markdown ni commentaire hors JSON.',
         ].join(' '),
       },
       {
         role: 'user',
         content: JSON.stringify({
-          transcript,
-          locallyExtractedFacts: extractedFacts,
-          context: this.context(dto),
+          rawTranscription,
+          cleanedTranscription,
+          preferences: this.context(dto),
         }),
       },
     ];
   }
 
-  fallback(
-    transcript: string,
-    dto: GenerateEmailDto,
-    extractedFacts: object,
-    previous: unknown,
-    issues: string[],
-  ): GroqMessage[] {
-    const messages = this.fastPath(transcript, dto, extractedFacts);
-    messages.push({
-      role: 'user',
-      content: JSON.stringify({
-        task: 'Return a corrected complete JSON email. Fix every listed issue. This is the final attempt.',
-        previousResponse: previous,
-        validationIssues: issues,
-      }),
-    });
-    return messages;
-  }
-
-  analysis(transcript: string, dto: GenerateEmailDto): GroqMessage[] {
-    return [
-      {
-        role: 'system',
-        content: [
-          'You analyze voice transcripts for professional email drafting.',
-          'Extract only explicitly supported information. Never invent or complete a missing fact.',
-          `emailType must be one of: ${EMAIL_TYPES.join(', ')}.`,
-          'Return JSON only with: language, intent, emailType, recipient, requestedAction, people, company, dates, times, amounts, places, references, priority, detectedTone, formality, importantInformation, confidence.',
-          'Arrays must contain the exact surface values found in the source. confidence is between 0 and 1.',
-        ].join(' '),
-      },
-      { role: 'user', content: JSON.stringify({ transcript, providedContext: this.context(dto) }) },
-    ];
-  }
-
   generation(
-    transcript: string,
-    analysis: TranscriptAnalysis,
+    rawTranscription: string,
+    cleanedTranscription: string,
+    analysis: EmailIntentAnalysis,
     dto: GenerateEmailDto,
+    previousEmail?: unknown,
   ): GroqMessage[] {
     return [
       {
         role: 'system',
         content: [
-          'You are a specialist professional email-writing assistant. Understand the real intention behind a voice transcript; do not merely paraphrase it.',
-          'Reconstruct a natural, directly sendable email as a skilled human assistant would write it.',
-          'Preserve every important fact, including all names, dates, times, amounts, places, companies, and references. Correct errors, remove speech artifacts and repetition, reorganize ideas, and add only useful transitions.',
-          'Never invent, infer, alter, or omit a fact. If essential information is absent, omit it or use neutral wording such as the language-equivalent of “as agreed”, “on the planned date”, or “following our conversation”; never fabricate a value.',
-          'Adapt style to the detected email type, relationship, requested tone, language, and formality. Short input still needs a proportionate greeting, natural body, and closing, without unsupported detail.',
-          'The subject must be specific, natural, and at most 8 words. Never use generic subjects such as Email, Message, Objet, or Sans objet.',
-          'Do not add an invented sender name or signature. The result must not mention AI or sound machine-generated.',
-          'Return JSON only with exactly: language, tone, intent, subject, body, suggestedRecipient.',
+          'Tu es le moteur de rédaction professionnelle de l’application Z.',
+          'Utilise l’analyse structurée comme source principale de vérité et la transcription originale seulement pour vérifier le contexte. Respecte strictement langue, ton et longueur demandés.',
+          'Conserve tous les détails utiles, supprime hésitations et répétitions, reformule naturellement sans recopier la transcription.',
+          'N’invente jamais nom, date, entreprise, poste, numéro, adresse, événement, pièce jointe, promesse ou signature. Ne mentionne une pièce jointe que si attachmentsMentioned le permet. Une information manquante doit rester neutre.',
+          'Crée un objet précis. Paragraphes courts, ouverture et politesse adaptées, sans formule générique inutile. Ne mentionne jamais IA, Groq, Deepgram, transcription ou application Z.',
+          'Retourne exclusivement un JSON: {subject,body,language,tone,emailType,warnings,missingInformation}. Aucun Markdown.',
         ].join(' '),
       },
       {
         role: 'user',
-        content: JSON.stringify({ transcript, analysis, context: this.context(dto) }),
+        content: JSON.stringify({
+          analysis,
+          rawTranscription,
+          cleanedTranscription,
+          preferences: this.context(dto),
+          previousEmail,
+          instruction: dto.userInstruction,
+        }),
       },
     ];
   }
 
-  repair(
-    transcript: string,
-    analysis: TranscriptAnalysis,
-    dto: GenerateEmailDto,
-    draft: GeneratedEmailResponse | null,
-    issues: string[],
-  ): GroqMessage[] {
-    const messages = this.generation(transcript, analysis, dto);
-    messages.push({
-      role: 'user',
-      content: JSON.stringify({
-        task: 'Repair the draft once. Resolve every validation issue while preserving all source facts.',
-        previousDraft: draft,
-        validationIssues: issues,
-      }),
-    });
-    return messages;
-  }
-
   private context(dto: GenerateEmailDto) {
     return {
-      detectedLanguage: dto.detectedSpeechLanguage || dto.language || 'auto',
-      speechLanguageMode: dto.speechLanguageMode || 'auto',
-      requestedOutputLanguage: dto.requestedOutputLanguage,
-      recipientName: dto.recipientName,
-      relationship: dto.relationship,
+      detectedLanguage: dto.detectedSpeechLanguage || dto.language,
+      requestedOutputLanguage: dto.effectiveOutputLanguage,
       requestedTone: dto.tone || 'auto',
       customTone: dto.customTone,
-      length: dto.length || 'auto',
-      subject: dto.subject,
-      providedIntent: dto.intent,
-      providedEmailType: dto.emailType,
-      userContext: dto.userContext,
-      history: dto.history,
+      requestedLength: dto.length || 'auto',
+      recipientName: dto.recipientName,
+      relationship: dto.relationship,
+      emailType: dto.emailType,
       currentBody: dto.currentBody,
       template: dto.template || dto.templateKey,
     };

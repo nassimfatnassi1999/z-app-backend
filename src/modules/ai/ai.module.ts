@@ -17,6 +17,6 @@ import { TranscriptCleanerService } from './transcript-cleaner.service';
     PromptBuilderService,
     TranscriptCleanerService,
   ],
-  exports: [AiService],
+  exports: [AiService, EmailGenerationService],
 })
 export class AiModule {}

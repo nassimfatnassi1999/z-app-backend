@@ -14,6 +14,7 @@ import {
   unsupportedLanguageResponse,
 } from './languageMap';
 import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
+import { DEFAULT_DEEPGRAM_MODEL } from '../../config/ai-models';
 
 type DeepgramResponse = {
   results?: {
@@ -195,9 +196,7 @@ export class SpeechService implements SpeechProvider {
   }
 
   private buildDeepgramOptions(language?: SupportedSpeechLanguage): DeepgramOptions {
-    // Whisper is the common denominator for automatic detection and every
-    // language exposed by the mobile selector, including Arabic.
-    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'whisper';
+    const model = this.config.get<string>('DEEPGRAM_MODEL')?.trim() || DEFAULT_DEEPGRAM_MODEL;
     const options: DeepgramOptions = {
       model,
       smart_format: 'true',
@@ -211,7 +210,13 @@ export class SpeechService implements SpeechProvider {
       return { ...options, language };
     }
 
-    return { ...options, detect_language: 'true' };
+    const automaticLanguage = this.config.get<string>('DEEPGRAM_LANGUAGE')?.trim() || 'multi';
+    const detectLanguage = this.config.get<string>('DEEPGRAM_DETECT_LANGUAGE') !== 'false';
+    return {
+      ...options,
+      language: automaticLanguage,
+      ...(detectLanguage ? { detect_language: 'true' } : {}),
+    };
   }
 
   private deepgramLanguageFor(language: string): SupportedSpeechLanguage | undefined {
