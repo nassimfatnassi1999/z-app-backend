@@ -36,7 +36,7 @@ type DeepgramResponse = {
 type TranscriptResponse = {
   transcript: string;
   language: NormalizedSpeechLanguage;
-  confidence: number;
+  confidence: number | null;
   duration: number;
 };
 
@@ -60,16 +60,31 @@ export class SpeechService implements SpeechProvider {
 
   constructor(private readonly config: ConfigService) {}
 
-  async transcribe(file: any, selectedLanguage = 'auto'): Promise<TranscriptResponse> {
+  async transcribe(
+    file: any,
+    selectedLanguage = 'auto',
+    context: { requestId?: string; actorId?: string } = {},
+  ): Promise<TranscriptResponse> {
+    const started = performance.now();
+    const requestId = context.requestId || 'unknown';
     const mime = this.detectMime(file.buffer, this.normalizeMime(file.mimetype, file.originalname));
     const normalizedSelection = selectedLanguage.trim().toLowerCase() || 'auto';
     const deepgramLanguage = this.deepgramLanguageFor(normalizedSelection);
     const deepgramOptions = this.buildDeepgramOptions(deepgramLanguage);
-    this.debug(`received file mime: ${file.mimetype || 'unknown'} -> ${mime}`);
-    this.debug(`received file size: ${file.size ?? file.buffer?.length ?? 0}`);
-    this.debug(`selected speech language: ${normalizedSelection}`);
-    this.debug(`Deepgram language: ${deepgramLanguage ?? 'auto-detect'}`);
-    this.debug(`Deepgram options: ${JSON.stringify(deepgramOptions)}`);
+    this.debug(
+      JSON.stringify({
+        event: 'stt_received',
+        requestId,
+        actorId: context.actorId,
+        size: file.size ?? file.buffer?.length ?? 0,
+        extension: String(file.originalname || '')
+          .split('.')
+          .pop(),
+        declaredMime: file.mimetype || 'unknown',
+        detectedMime: mime,
+        requestedLanguage: normalizedSelection,
+      }),
+    );
 
     if (!this.acceptedMime.has(mime)) {
       throw new BadRequestException('Format audio non supporté.');
@@ -90,34 +105,61 @@ export class SpeechService implements SpeechProvider {
         headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
         body: file.buffer as unknown as BodyInit,
       },
-      { timeoutMs: 30_000, retries: 1, errorMessage: 'Deepgram transcription failed' },
+      {
+        timeoutMs: 15_000,
+        retries: 1,
+        retryStatuses: [429, 502, 503, 504],
+        errorMessage: 'Deepgram transcription failed',
+      },
     );
 
     if (!response.ok) {
       const body = await response.text();
-      this.debug(`Deepgram error status: ${response.status}`);
-      this.debug(`Deepgram error body length: ${body.length}`);
-      throw new ServiceUnavailableException('Deepgram transcription failed');
+      this.logger.error(
+        JSON.stringify({
+          event: 'stt_provider_error',
+          requestId,
+          status: response.status,
+          responseLength: body.length,
+          deepgramMs: Math.round(performance.now() - started),
+        }),
+      );
+      throw new ServiceUnavailableException({
+        code: 'STT_PROVIDER_ERROR',
+        message: 'La transcription est momentanément indisponible.',
+        retryable: true,
+        requestId,
+      });
     }
 
     const json = (await response.json()) as DeepgramResponse;
     const normalized = this.normalizeDeepgram(json, deepgramLanguage ?? null);
     const finalLanguage =
-      deepgramLanguage === undefined && normalized.confidence < 0.55
+      deepgramLanguage === undefined &&
+      normalized.confidence !== null &&
+      normalized.confidence < 0.55
         ? 'unknown'
         : normalized.language;
     const result = { ...normalized, language: finalLanguage };
-    this.debug(`Deepgram detected language: ${normalized.language}`);
-    this.debug(`confidence: ${normalized.confidence}`);
-    this.debug(`transcript length: ${normalized.transcript.length}`);
     this.debug(
-      `returned response body shape: ${JSON.stringify({
-        transcript: 'string',
-        language: 'string',
-        confidence: 'number',
-        duration: 'number',
-      })}`,
+      JSON.stringify({
+        event: 'stt_completed',
+        requestId,
+        status: response.status,
+        language: normalized.language,
+        transcriptLength: normalized.transcript.length,
+        confidence: normalized.confidence,
+        duration: normalized.duration,
+        deepgramMs: Math.round(performance.now() - started),
+      }),
     );
+    if (!result.transcript)
+      throw new BadRequestException({
+        code: 'STT_NO_SPEECH',
+        message: 'Aucune voix détectée. Parlez plus près du microphone puis réessayez.',
+        retryable: true,
+        requestId,
+      });
     return result;
   }
 
@@ -137,7 +179,7 @@ export class SpeechService implements SpeechProvider {
     return {
       transcript: alternative?.transcript?.trim() ?? '',
       language: normalizeLanguageCode(language),
-      confidence: alternative?.confidence ?? 0,
+      confidence: typeof alternative?.confidence === 'number' ? alternative.confidence : null,
       duration: json.metadata?.duration ?? 0,
     };
   }
@@ -149,7 +191,7 @@ export class SpeechService implements SpeechProvider {
       smart_format: 'true',
       punctuate: 'true',
       paragraphs: 'true',
-      utterances: 'true',
+      utterances: 'false',
       diarize: 'false',
     };
 
@@ -181,7 +223,7 @@ export class SpeechService implements SpeechProvider {
     return mimetype.toLowerCase();
   }
 
-  private detectMime(buffer: Buffer | undefined, declaredMime: string) {
+  private detectMime(buffer: Buffer | undefined, _declaredMime: string) {
     if (!buffer || buffer.length < 4) throw new BadRequestException('Fichier audio vide.');
     const ascii = buffer.subarray(0, 12).toString('ascii');
     if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
@@ -189,8 +231,7 @@ export class SpeechService implements SpeechProvider {
     if (ascii.startsWith('ID3') || (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0)) {
       return 'audio/mpeg';
     }
-    if (ascii.slice(4, 8) === 'ftyp')
-      return declaredMime === 'audio/m4a' ? 'audio/m4a' : 'audio/mp4';
+    if (ascii.slice(4, 8) === 'ftyp') return 'audio/mp4';
     throw new BadRequestException(
       'Le contenu du fichier ne correspond pas à un format audio supporté.',
     );

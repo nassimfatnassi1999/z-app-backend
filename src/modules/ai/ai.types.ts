@@ -54,6 +54,10 @@ export interface GeneratedEmailResponse {
   emailType: EmailType;
   detectedTone: string;
   detectedLanguage: string;
+  generationConfidence: number;
+  validationScore: number;
+  requestId: string;
+  timings: { generationMs: number; validationMs: number; totalMs: number };
 }
 
 export interface GroqMessage {

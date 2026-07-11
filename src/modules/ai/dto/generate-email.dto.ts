@@ -84,4 +84,6 @@ export class GenerateEmailDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) emailType?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(5000) userContext?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(10000) history?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) requestId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsIn(['fast', 'advanced']) qualityMode?: string;
 }

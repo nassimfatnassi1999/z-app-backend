@@ -1,7 +1,6 @@
-import { ServiceUnavailableException } from '@nestjs/common';
+import { HttpException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiService } from './ai.service';
-import { AIAnalysisService } from './ai-analysis.service';
 import { EmailGenerationService } from './email-generation.service';
 import { EmailValidationService } from './email-validation.service';
 import { PromptBuilderService } from './prompt-builder.service';
@@ -37,9 +36,8 @@ describe('AiService email quality validation', () => {
     const config = new ConfigService({ GROQ_API_KEY: apiKey, GROQ_MODEL: 'test-model' });
     const prompts = new PromptBuilderService();
     const cleaner = new TranscriptCleanerService();
-    const analysis = new AIAnalysisService(config, prompts);
     const validation = new EmailValidationService();
-    const generation = new EmailGenerationService(config, cleaner, analysis, prompts, validation);
+    const generation = new EmailGenerationService(config, cleaner, prompts, validation);
     return new AiService(config, generation);
   }
 
@@ -56,7 +54,7 @@ describe('AiService email quality validation', () => {
 
     expect(result.subject).toBe(completeEmail.subject);
     expect(result.body).toContain('Je souhaite solliciter un congé');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -86,7 +84,7 @@ describe('AiService email quality validation', () => {
     await expect(
       service().generateEmail({ transcript, tone: 'custom', customTone: '  ' }),
     ).rejects.toMatchObject({
-      message: 'customTone is required when tone is custom',
+      message: 'Le ton personnalisé est requis.',
     });
   });
 
@@ -113,7 +111,6 @@ describe('AiService email quality validation', () => {
     };
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)))
       .mockResolvedValueOnce(groqResponse(JSON.stringify(weakEmail)))
       .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)));
 
@@ -124,13 +121,12 @@ describe('AiService email quality validation', () => {
     });
 
     expect(result.body).toBe(completeEmail.body);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('retries invalid JSON, then returns a clear error for another weak output', async () => {
     jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)))
       .mockResolvedValueOnce(groqResponse('not-json'))
       .mockResolvedValueOnce(
         groqResponse(
@@ -145,14 +141,14 @@ describe('AiService email quality validation', () => {
     await expect(
       service().generateEmail({ transcript, language: 'fr', tone: 'auto' }),
     ).rejects.toMatchObject({
-      message: 'La génération IA a échoué. Réessayez.',
+      message: 'Impossible de générer l’email pour le moment.',
     });
   });
 
   it('never falls back to raw transcript when Groq is not configured', async () => {
     await expect(
       service('').generateEmail({ transcript, language: 'fr', tone: 'auto' }),
-    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    ).rejects.toBeInstanceOf(HttpException);
   });
 
   it('expands the existing email without requesting a new email', async () => {

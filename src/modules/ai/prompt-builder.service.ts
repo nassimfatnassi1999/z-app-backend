@@ -4,6 +4,49 @@ import { EMAIL_TYPES, GeneratedEmailResponse, GroqMessage, TranscriptAnalysis } 
 
 @Injectable()
 export class PromptBuilderService {
+  fastPath(transcript: string, dto: GenerateEmailDto, extractedFacts: object): GroqMessage[] {
+    return [
+      {
+        role: 'system',
+        content: [
+          'You are a senior professional email assistant. In one operation, understand the voice transcript, extract its facts, and write a natural directly sendable email.',
+          'Preserve every name, date, time, amount, location, company and reference. Never invent or remove facts. Correct speech errors, remove repetition, reorganize ideas, and add only fact-neutral transitions.',
+          `emailType must be one of: ${EMAIL_TYPES.join(', ')}.`,
+          'The subject must be specific and at most 8 words. The body needs an appropriate greeting, coherent content, and closing, but never an invented signature.',
+          'Return JSON only with: subject, body, intent, emailType, detectedTone, detectedLanguage, suggestedRecipient, confidence, extractedFacts.',
+          'extractedFacts must contain arrays people, dates, times, amounts, locations, references. confidence must be between 0 and 1.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          transcript,
+          locallyExtractedFacts: extractedFacts,
+          context: this.context(dto),
+        }),
+      },
+    ];
+  }
+
+  fallback(
+    transcript: string,
+    dto: GenerateEmailDto,
+    extractedFacts: object,
+    previous: unknown,
+    issues: string[],
+  ): GroqMessage[] {
+    const messages = this.fastPath(transcript, dto, extractedFacts);
+    messages.push({
+      role: 'user',
+      content: JSON.stringify({
+        task: 'Return a corrected complete JSON email. Fix every listed issue. This is the final attempt.',
+        previousResponse: previous,
+        validationIssues: issues,
+      }),
+    });
+    return messages;
+  }
+
   analysis(transcript: string, dto: GenerateEmailDto): GroqMessage[] {
     return [
       {

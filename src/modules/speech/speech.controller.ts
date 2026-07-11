@@ -2,6 +2,7 @@ import {
   Body,
   BadRequestException,
   Controller,
+  Req,
   Post,
   UploadedFiles,
   UseGuards,
@@ -12,6 +13,7 @@ import { ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { SpeechService } from './speech.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ApiBearerAuth } from '@nestjs/swagger';
+import { Request } from 'express';
 
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 
@@ -36,12 +38,16 @@ export class SpeechController {
   transcribe(
     @UploadedFiles() files: { audio?: any[]; file?: any[] },
     @Body('language') language = 'auto',
+    @Req() request: Request & { user?: { sub?: string }; requestId?: string },
   ) {
     const file = files.audio?.[0] ?? files.file?.[0];
     if (!file) {
       throw new BadRequestException('Aucun fichier audio reçu.');
     }
 
-    return this.speech.transcribe(file, language);
+    return this.speech.transcribe(file, language, {
+      requestId: request.requestId,
+      actorId: request.user?.sub || request.header('x-device-id'),
+    });
   }
 }
