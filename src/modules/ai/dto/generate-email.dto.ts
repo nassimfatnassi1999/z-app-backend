@@ -72,4 +72,16 @@ export class GenerateEmailDto {
   @IsOptional()
   @IsString()
   templateKey?: string;
+
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) recipientName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) relationship?: string;
+  @ApiPropertyOptional({ enum: ['short', 'medium', 'long', 'auto'] })
+  @IsOptional()
+  @IsIn(['short', 'medium', 'long', 'auto'])
+  length?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) subject?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) intent?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) emailType?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(5000) userContext?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(10000) history?: string;
 }

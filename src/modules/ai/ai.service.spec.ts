@@ -1,6 +1,11 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiService } from './ai.service';
+import { AIAnalysisService } from './ai-analysis.service';
+import { EmailGenerationService } from './email-generation.service';
+import { EmailValidationService } from './email-validation.service';
+import { PromptBuilderService } from './prompt-builder.service';
+import { TranscriptCleanerService } from './transcript-cleaner.service';
 
 const transcript =
   'Je veux envoyer un mail à mon responsable pour demander un congé vendredi prochain pour raison personnelle.';
@@ -29,12 +34,13 @@ describe('AiService email quality validation', () => {
   });
 
   function service(apiKey = 'test-key') {
-    return new AiService(
-      new ConfigService({
-        GROQ_API_KEY: apiKey,
-        GROQ_MODEL: 'test-model',
-      }),
-    );
+    const config = new ConfigService({ GROQ_API_KEY: apiKey, GROQ_MODEL: 'test-model' });
+    const prompts = new PromptBuilderService();
+    const cleaner = new TranscriptCleanerService();
+    const analysis = new AIAnalysisService(config, prompts);
+    const validation = new EmailValidationService();
+    const generation = new EmailGenerationService(config, cleaner, analysis, prompts, validation);
+    return new AiService(config, generation);
   }
 
   it('returns a complete valid Groq email without retrying', async () => {
@@ -50,7 +56,7 @@ describe('AiService email quality validation', () => {
 
     expect(result.subject).toBe(completeEmail.subject);
     expect(result.body).toContain('Je souhaite solliciter un congé');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -107,6 +113,7 @@ describe('AiService email quality validation', () => {
     };
     const fetchMock = jest
       .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)))
       .mockResolvedValueOnce(groqResponse(JSON.stringify(weakEmail)))
       .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)));
 
@@ -117,12 +124,13 @@ describe('AiService email quality validation', () => {
     });
 
     expect(result.body).toBe(completeEmail.body);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('retries invalid JSON, then returns a clear error for another weak output', async () => {
     jest
       .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)))
       .mockResolvedValueOnce(groqResponse('not-json'))
       .mockResolvedValueOnce(
         groqResponse(
