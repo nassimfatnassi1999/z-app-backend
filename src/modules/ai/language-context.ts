@@ -36,9 +36,9 @@ export function resolveEffectiveOutputLanguage(params: {
   return (
     knownLanguage(params.requestedOutputLanguage) ??
     knownLanguage(params.transcriptRequestedLanguage) ??
+    knownLanguage(params.appLanguage) ??
     knownLanguage(params.detectedSpeechLanguage) ??
     (params.speechLanguageMode !== 'auto' ? params.speechLanguageMode : undefined) ??
-    knownLanguage(params.appLanguage) ??
     'en'
   );
 }

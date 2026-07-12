@@ -34,7 +34,13 @@ describe('AiService email quality validation', () => {
   });
 
   function service(apiKey = 'test-key') {
-    const config = new ConfigService({ GROQ_API_KEY: apiKey, GROQ_MODEL: 'test-model' });
+    const config = new ConfigService({
+      GROQ_API_KEY: apiKey,
+      GROQ_MODEL: 'test-model',
+      GROQ_PRIMARY_MODEL: 'test-model',
+      GROQ_ANALYSIS_MODEL: 'test-model',
+      GROQ_GENERATION_MODEL: 'test-model',
+    });
     const prompts = new PromptBuilderService();
     const cleaner = new TranscriptCleanerService();
     const validation = new EmailValidationService();

@@ -129,4 +129,15 @@ export class GenerateEmailDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) requestId?: string;
   @ApiPropertyOptional() @IsOptional() @IsIn(['fast', 'advanced']) qualityMode?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) userInstruction?: string;
+
+  @ApiPropertyOptional({ enum: ['light', 'medium', 'full'], default: 'medium' })
+  @IsOptional()
+  @IsIn(['light', 'medium', 'full'])
+  enrichmentLevel?: 'light' | 'medium' | 'full';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  sourceGenerationId?: string;
 }

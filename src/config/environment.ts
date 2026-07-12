@@ -15,10 +15,28 @@ export const ENVIRONMENT_DEFAULTS = {
   AI_ANALYSIS_TEMPERATURE: '0.1',
   AI_GENERATION_TEMPERATURE: '0.25',
   AI_MAX_COMPLETION_TOKENS: '1200',
+  GROQ_BASE_URL: 'https://api.groq.com/openai/v1',
+  GROQ_ANALYSIS_MODEL: 'openai/gpt-oss-120b',
+  GROQ_GENERATION_MODEL: 'openai/gpt-oss-120b',
+  AI_REPAIR_TEMPERATURE: '0.1',
+  AI_ENABLE_REPAIR: 'true',
+  DEEPGRAM_BASE_URL: 'https://api.deepgram.com/v1',
+  DEEPGRAM_LANGUAGE_STRATEGY: 'auto',
+  DEEPGRAM_DEFAULT_LANGUAGE: 'multi',
+  DEEPGRAM_TIMEOUT_MS: '15000',
+  DEEPGRAM_MAX_RETRIES: '1',
+  DEEPGRAM_ENABLE_LANGUAGE_RETRY: 'false',
+  MAX_AUDIO_SIZE_BYTES: '12582912',
+  MIN_AUDIO_DURATION_MS: '500',
+  MAX_AUDIO_DURATION_SECONDS: '600',
 } as const;
+
+import { parseBoundedNumber, parseHttpUrl, parseStrictBoolean } from './runtime-config';
 
 const LEGACY_ALIASES: Record<string, string[]> = {
   GROQ_PRIMARY_MODEL: ['GROQ_MODEL'],
+  GROQ_ANALYSIS_MODEL: ['GROQ_PRIMARY_MODEL', 'GROQ_MODEL'],
+  GROQ_GENERATION_MODEL: ['GROQ_PRIMARY_MODEL', 'GROQ_MODEL'],
   DEEPGRAM_MODEL: ['DEEPGRAM_TRANSCRIPTION_MODEL'],
   DEEPGRAM_LANGUAGE: ['DEEPGRAM_DEFAULT_LANGUAGE'],
   DEEPGRAM_DETECT_LANGUAGE: ['DEEPGRAM_AUTO_DETECT_LANGUAGE'],
@@ -27,14 +45,14 @@ const LEGACY_ALIASES: Record<string, string[]> = {
 
 function applyDefaultsAndAliases(config: Record<string, unknown>) {
   for (const [name, aliases] of Object.entries(LEGACY_ALIASES)) {
-    if (String(config[name] ?? '').trim()) continue;
+    if (config[name] !== undefined && config[name] !== null) continue;
     const legacyValue = aliases
       .map((alias) => config[alias])
       .find((value) => String(value ?? '').trim());
     if (legacyValue !== undefined) config[name] = legacyValue;
   }
   for (const [name, value] of Object.entries(ENVIRONMENT_DEFAULTS)) {
-    if (!String(config[name] ?? '').trim()) config[name] = value;
+    if (config[name] === undefined || config[name] === null) config[name] = value;
   }
 }
 
@@ -69,6 +87,64 @@ export function validateEnvironment(config: Record<string, unknown>) {
   }
   for (const name of ['DEEPGRAM_API_KEY', 'GROQ_API_KEY']) {
     if (!String(config[name] ?? '').trim()) throw new Error(`${name} is required`);
+  }
+  const nonEmpty = [
+    'DEEPGRAM_MODEL',
+    'GROQ_ANALYSIS_MODEL',
+    'GROQ_GENERATION_MODEL',
+    'GROQ_FALLBACK_MODEL',
+  ];
+  for (const name of nonEmpty) {
+    if (!String(config[name] ?? '').trim()) throw new Error(`${name} must not be empty`);
+  }
+  const nodeEnvironment = String(config.NODE_ENV ?? 'development');
+  if (!['development', 'test', 'production'].includes(nodeEnvironment)) {
+    throw new Error('NODE_ENV must be development, test, or production');
+  }
+  parseBoundedNumber(config.PORT ?? '3000', 'PORT', { min: 1, max: 65535, integer: true });
+  parseHttpUrl(config.GROQ_BASE_URL, 'GROQ_BASE_URL');
+  parseHttpUrl(config.DEEPGRAM_BASE_URL, 'DEEPGRAM_BASE_URL');
+  for (const name of ['AI_ENABLE_REPAIR', 'DEEPGRAM_ENABLE_LANGUAGE_RETRY']) {
+    parseStrictBoolean(config[name], name);
+  }
+  if (!['auto', 'forced'].includes(String(config.DEEPGRAM_LANGUAGE_STRATEGY))) {
+    throw new Error('DEEPGRAM_LANGUAGE_STRATEGY must be auto or forced');
+  }
+  for (const name of ['GROQ_MAX_RETRIES', 'DEEPGRAM_MAX_RETRIES']) {
+    parseBoundedNumber(config[name], name, { min: 0, max: 5, integer: true });
+  }
+  for (const name of ['GROQ_TIMEOUT_MS', 'DEEPGRAM_TIMEOUT_MS']) {
+    parseBoundedNumber(config[name], name, { min: 1, max: 120000, integer: true });
+  }
+  for (const name of [
+    'AI_ANALYSIS_TEMPERATURE',
+    'AI_GENERATION_TEMPERATURE',
+    'AI_REPAIR_TEMPERATURE',
+  ]) {
+    parseBoundedNumber(config[name], name, { min: 0, max: 2 });
+  }
+  parseBoundedNumber(config.AI_MAX_COMPLETION_TOKENS, 'AI_MAX_COMPLETION_TOKENS', {
+    min: 1,
+    max: 32768,
+    integer: true,
+  });
+  parseBoundedNumber(config.MAX_AUDIO_SIZE_BYTES, 'MAX_AUDIO_SIZE_BYTES', {
+    min: 1024,
+    max: 100 * 1024 * 1024,
+    integer: true,
+  });
+  const minDuration = parseBoundedNumber(config.MIN_AUDIO_DURATION_MS, 'MIN_AUDIO_DURATION_MS', {
+    min: 1,
+    max: 60000,
+    integer: true,
+  });
+  const maxDurationSeconds = parseBoundedNumber(
+    config.MAX_AUDIO_DURATION_SECONDS,
+    'MAX_AUDIO_DURATION_SECONDS',
+    { min: 1, max: 3600, integer: true },
+  );
+  if (minDuration >= maxDurationSeconds * 1000) {
+    throw new Error('MIN_AUDIO_DURATION_MS must be less than MAX_AUDIO_DURATION_SECONDS');
   }
   if (config.NODE_ENV === 'production' && config.MAIL_ENABLED !== 'true') {
     throw new Error('MAIL_ENABLED must be true in production');

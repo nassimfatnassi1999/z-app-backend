@@ -4,12 +4,13 @@ import { randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
 import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import { AIAnalysisService } from './ai-analysis.service';
-import { AiPipelineException, AiErrorCode } from './ai-pipeline.error';
+import { AiPipelineException, AiErrorCode, EmailDraftValidationError } from './ai-pipeline.error';
 import {
   EMAIL_ANALYSIS_PROMPT_VERSION,
   EMAIL_GENERATION_PROMPT_VERSION,
   EMAIL_TYPES,
   EmailIntentAnalysis,
+  EmailSourceContext,
   EmailType,
   GeneratedEmailResponse,
 } from './ai.types';
@@ -20,6 +21,7 @@ import { detectRequestedOutputLanguage, resolveEffectiveOutputLanguage } from '.
 import { PromptBuilderService } from './prompt-builder.service';
 import { TranscriptCleanerService } from './transcript-cleaner.service';
 import { DEFAULT_DEEPGRAM_MODEL, resolveGroqModels } from '../../config/ai-models';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class EmailGenerationService {
@@ -30,9 +32,10 @@ export class EmailGenerationService {
     private readonly prompts: PromptBuilderService,
     private readonly validation: EmailValidationService,
     private readonly analysisService: AIAnalysisService,
+    private readonly prisma?: PrismaService,
   ) {}
 
-  async generate(dto: GenerateEmailDto): Promise<GeneratedEmailResponse> {
+  async generate(dto: GenerateEmailDto, userId?: string): Promise<GeneratedEmailResponse> {
     const started = performance.now();
     const requestId = dto.requestId?.trim() || randomUUID();
     const raw = dto.transcript.trim();
@@ -71,6 +74,15 @@ export class EmailGenerationService {
     const analysisStarted = performance.now();
     const analyzed = await this.analysisService.analyze(raw, cleaned, dto, requestId);
     const analysisDurationMs = Math.round(performance.now() - analysisStarted);
+    if (
+      !dto.requestedOutputLanguage &&
+      !transcriptRequest &&
+      !dto.appLanguage &&
+      !detected &&
+      (!dto.speechLanguageMode || dto.speechLanguageMode === 'auto')
+    ) {
+      dto.effectiveOutputLanguage = analyzed.analysis.sourceLanguage || dto.effectiveOutputLanguage;
+    }
     // Explicitly resolved client/transcript preference always wins over model inference.
     analyzed.analysis.outputLanguage = dto.effectiveOutputLanguage;
     const generatedStarted = performance.now();
@@ -84,25 +96,54 @@ export class EmailGenerationService {
     );
     const generationDurationMs = Math.round(performance.now() - generatedStarted);
     const draft = this.normalize(generated.value, analyzed.analysis, requestId);
-    const blocking = this.validation.validate(draft, raw, analyzed.analysis);
-    if (blocking.length)
-      throw new AiPipelineException('AI_INVALID_RESPONSE', true, requestId, blocking.join('; '));
+    const sourceContext = this.sourceContext(raw, cleaned, analyzed.analysis, dto, transcriptRequest);
+    const validationStarted = performance.now();
+    let validationResult = this.validation.validateDraft(draft, sourceContext);
+    let finalDraft = draft;
+    let repairUsed = false;
+    let repairMs = 0;
+    if (!validationResult.valid && this.config.get<string>('AI_ENABLE_REPAIR', 'true') === 'true') {
+      const repairStarted = performance.now();
+      const repairedValue = await this.call(
+        key,
+        generated.model,
+        this.prompts.build('email-repair.v1', {
+          sourceContext,
+          invalidDraft: { subject: draft.subject, body: draft.body, language: draft.language, tone: draft.tone },
+          blockingIssues: validationResult.issues.filter((issue) => issue.severity === 'blocking'),
+        }),
+        requestId,
+        Number(this.config.get('AI_REPAIR_TEMPERATURE')) || 0.1,
+      );
+      finalDraft = this.normalize(repairedValue, analyzed.analysis, requestId);
+      validationResult = this.validation.validateDraft(finalDraft, sourceContext);
+      repairUsed = true;
+      repairMs = Math.round(performance.now() - repairStarted);
+    }
+    if (!validationResult.valid) {
+      throw new EmailDraftValidationError(
+        requestId,
+        validationResult.issues.map(({ code, message }) => ({ code, message })),
+      );
+    }
+    const validationMs = Math.round(performance.now() - validationStarted);
     const warnings = [
       ...new Set([
         ...(Array.isArray(generated.value.warnings) ? generated.value.warnings.map(String) : []),
-        ...this.validation.warnings(draft, raw, analyzed.analysis),
+        ...this.validation.warnings(finalDraft, raw, analyzed.analysis),
+        ...validationResult.issues.filter((issue) => issue.severity === 'warning').map((issue) => issue.code),
       ]),
     ];
     const totalDurationMs = Math.round(performance.now() - started);
-    draft.warnings = warnings;
-    draft.missingInformation = analyzed.analysis.missingCriticalInformation;
-    draft.validationScore = warnings.length ? Math.max(0.5, 1 - warnings.length * 0.08) : 1;
-    draft.timings = {
+    finalDraft.warnings = warnings;
+    finalDraft.missingInformation = analyzed.analysis.missingCriticalInformation;
+    finalDraft.validationScore = warnings.length ? Math.max(0.5, 1 - warnings.length * 0.08) : 1;
+    finalDraft.timings = {
       generationMs: generationDurationMs,
-      validationMs: 0,
+      validationMs,
       totalMs: totalDurationMs,
     };
-    draft.metadata = {
+    finalDraft.metadata = {
       model: generated.model,
       deepgramModel: this.config.get<string>('DEEPGRAM_MODEL') || DEFAULT_DEEPGRAM_MODEL,
       groqPrimaryModel: resolveGroqModels(this.config).primary,
@@ -113,32 +154,65 @@ export class EmailGenerationService {
       totalDurationMs,
       analysisPromptVersion: EMAIL_ANALYSIS_PROMPT_VERSION,
       generationPromptVersion: EMAIL_GENERATION_PROMPT_VERSION,
+      generationId: randomUUID(),
+      correlationId: requestId,
+      analysisPromptId: 'email-analysis.v1',
+      generationPromptId: 'email-generation.v1',
+      repairPromptId: repairUsed ? 'email-repair.v1' : undefined,
+      enrichmentLevel: dto.enrichmentLevel || 'medium',
+      repairUsed,
+      validationCodes: validationResult.issues.map((issue) => issue.code),
     };
-    Object.assign(draft, {
+    Object.assign(finalDraft, {
       speechLanguageMode: dto.speechLanguageMode || 'auto',
       detectedSpeechLanguage: detected,
       requestedOutputLanguage: dto.requestedOutputLanguage,
       effectiveOutputLanguage: dto.effectiveOutputLanguage,
       speechConfidence: dto.speechConfidence,
     });
+    if (this.prisma && finalDraft.metadata.generationId) {
+      await this.prisma.emailGeneration.create({
+        data: {
+          generationId: finalDraft.metadata.generationId,
+          correlationId: requestId,
+          userId,
+          analysisPromptId: 'email-analysis.v1',
+          generationPromptId: 'email-generation.v1',
+          repairPromptId: repairUsed ? 'email-repair.v1' : null,
+          provider: 'groq',
+          model: generated.model,
+          fallbackModelUsed: generated.fallbackUsed ? generated.model : null,
+          temperature: Number(this.config.get('AI_GENERATION_TEMPERATURE')) || 0.25,
+          inputLanguage: analyzed.analysis.sourceLanguage,
+          outputLanguage: finalDraft.language,
+          enrichmentLevel: dto.enrichmentLevel || 'medium',
+          tone: finalDraft.tone,
+          repairUsed,
+          validationCodes: validationResult.issues.map((issue) => issue.code),
+        },
+      });
+    }
     this.logger.log(
       JSON.stringify({
         event: 'email_generation_completed',
         requestId,
-        deepgramModel: draft.metadata.deepgramModel,
-        groqPrimaryModel: draft.metadata.groqPrimaryModel,
+        deepgramModel: finalDraft.metadata.deepgramModel,
+        groqPrimaryModel: finalDraft.metadata.groqPrimaryModel,
         actualGroqModelUsed: generated.model,
-        fallbackUsed: draft.metadata.fallbackUsed,
+        fallbackUsed: finalDraft.metadata.fallbackUsed,
         detectedLanguage: analyzed.analysis.sourceLanguage,
         outputLanguage: draft.language,
         emailType: draft.emailType,
         analysisDurationMs,
         generationDurationMs,
+        validationMs,
+        repairMs,
+        repairUsed,
         totalDurationMs,
         success: true,
       }),
     );
-    return draft;
+    return finalDraft;
   }
 
   private async generateWithFallback(
@@ -186,10 +260,16 @@ export class EmailGenerationService {
       : new AiPipelineException('AI_GENERATION_FAILED', true, requestId, 'Generation failed');
   }
 
-  private async call(key: string, model: string, messages: unknown, requestId: string) {
+  private async call(
+    key: string,
+    model: string,
+    messages: unknown,
+    requestId: string,
+    temperature = Number(this.config.get('AI_GENERATION_TEMPERATURE')) || 0.25,
+  ) {
     try {
       const response = await fetchWithTimeout(
-        'https://api.groq.com/openai/v1/chat/completions',
+        `${this.config.get<string>('GROQ_BASE_URL', 'https://api.groq.com/openai/v1')}/chat/completions`,
         {
           method: 'POST',
           headers: {
@@ -199,7 +279,7 @@ export class EmailGenerationService {
           },
           body: JSON.stringify({
             model,
-            temperature: Number(this.config.get('AI_GENERATION_TEMPERATURE')) || 0.25,
+            temperature,
             top_p: 0.9,
             max_completion_tokens: Number(this.config.get('AI_MAX_COMPLETION_TOKENS')) || 1200,
             response_format: { type: 'json_object' },
@@ -240,6 +320,52 @@ export class EmailGenerationService {
         error instanceof Error ? error.message : 'Invalid provider response',
       );
     }
+  }
+
+  private sourceContext(
+    raw: string,
+    cleaned: string,
+    analysis: EmailIntentAnalysis,
+    dto: GenerateEmailDto,
+    transcriptRequestedLanguage?: string,
+  ): EmailSourceContext {
+    const requiredFacts = [
+      ...analysis.facts.map((value) => ({ kind: 'other' as const, value })),
+      ...analysis.dates.map((value) => ({ kind: 'date' as const, value })),
+      ...analysis.amounts.map((value) => ({ kind: 'amount' as const, value })),
+      ...analysis.locations.map((value) => ({ kind: 'location' as const, value })),
+      ...analysis.attachmentsMentioned.map((value) => ({ kind: 'attachment' as const, value })),
+    ];
+    return {
+      rawTranscript: raw,
+      normalizedTranscript: cleaned,
+      analysis,
+      languageContext: {
+        speechLanguageMode: dto.speechLanguageMode || 'auto',
+        detectedSpeechLanguage: dto.detectedSpeechLanguage,
+        requestedOutputLanguage: dto.requestedOutputLanguage,
+        transcriptRequestedLanguage,
+        userPreferredOutputLanguage: dto.appLanguage,
+        effectiveOutputLanguage: dto.effectiveOutputLanguage || 'en',
+        transcriptionConfidence: dto.speechConfidence,
+        languageDetectionConfidence: undefined,
+        resolutionSource: dto.requestedOutputLanguage
+          ? 'api'
+          : transcriptRequestedLanguage
+            ? 'transcript'
+            : dto.appLanguage
+              ? 'preference'
+              : dto.detectedSpeechLanguage
+                ? 'detected'
+                : dto.speechLanguageMode && dto.speechLanguageMode !== 'auto'
+                  ? 'forced'
+                  : 'default',
+      },
+      requiredFacts,
+      requestedActions: analysis.actionRequested ? [analysis.actionRequested] : [],
+      targetTone: dto.tone || analysis.tone || 'professional',
+      targetEnrichmentLevel: dto.enrichmentLevel || 'medium',
+    };
   }
 
   private normalize(

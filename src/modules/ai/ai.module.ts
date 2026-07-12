@@ -6,6 +6,7 @@ import { EmailGenerationService } from './email-generation.service';
 import { EmailValidationService } from './email-validation.service';
 import { PromptBuilderService } from './prompt-builder.service';
 import { TranscriptCleanerService } from './transcript-cleaner.service';
+import { PromptRegistry } from './prompts/prompt-registry';
 
 @Module({
   controllers: [AiController],
@@ -16,6 +17,7 @@ import { TranscriptCleanerService } from './transcript-cleaner.service';
     EmailValidationService,
     PromptBuilderService,
     TranscriptCleanerService,
+    PromptRegistry,
   ],
   exports: [AiService, EmailGenerationService],
 })

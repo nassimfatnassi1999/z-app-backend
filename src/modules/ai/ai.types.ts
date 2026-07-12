@@ -17,6 +17,51 @@ export type EmailType = (typeof EMAIL_TYPES)[number];
 export const EMAIL_ANALYSIS_PROMPT_VERSION = 'v2.0.0';
 export const EMAIL_GENERATION_PROMPT_VERSION = 'v2.0.0';
 
+export const ENRICHMENT_LEVELS = ['light', 'medium', 'full'] as const;
+export type EnrichmentLevel = (typeof ENRICHMENT_LEVELS)[number];
+
+export interface RequiredFact {
+  kind: 'name' | 'organization' | 'date' | 'time' | 'amount' | 'number' | 'email' | 'phone' | 'location' | 'attachment' | 'other';
+  value: string;
+}
+
+export interface LanguageContext {
+  speechLanguageMode: string;
+  detectedSpeechLanguage?: string;
+  requestedOutputLanguage?: string;
+  transcriptRequestedLanguage?: string;
+  userPreferredOutputLanguage?: string;
+  effectiveOutputLanguage: string;
+  transcriptionConfidence?: number;
+  languageDetectionConfidence?: number;
+  resolutionSource: 'api' | 'transcript' | 'preference' | 'detected' | 'forced' | 'default';
+}
+
+export interface EmailSourceContext {
+  rawTranscript: string;
+  normalizedTranscript: string;
+  analysis: EmailIntentAnalysis;
+  languageContext: LanguageContext;
+  requiredFacts: RequiredFact[];
+  requestedActions: string[];
+  targetTone: string;
+  targetEnrichmentLevel: EnrichmentLevel;
+}
+
+export interface ValidationIssue {
+  code: string;
+  severity: 'warning' | 'blocking';
+  message: string;
+  field?: 'subject' | 'body' | 'language' | 'facts';
+  metadata?: Record<string, unknown>;
+}
+
+export interface DraftValidationResult {
+  valid: boolean;
+  issues: ValidationIssue[];
+  requiresRepair: boolean;
+}
+
 export interface EmailIntentAnalysis {
   sourceLanguage: string;
   outputLanguage: string;
@@ -75,6 +120,14 @@ export interface GeneratedEmailResponse {
     totalDurationMs: number;
     analysisPromptVersion: string;
     generationPromptVersion: string;
+    generationId?: string;
+    correlationId?: string;
+    analysisPromptId?: string;
+    generationPromptId?: string;
+    repairPromptId?: string;
+    enrichmentLevel?: EnrichmentLevel;
+    repairUsed?: boolean;
+    validationCodes?: string[];
   };
   speechLanguageMode?: string;
   detectedSpeechLanguage?: string;

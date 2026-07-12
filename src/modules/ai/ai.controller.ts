@@ -1,4 +1,5 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AiService } from './ai.service';
@@ -14,8 +15,8 @@ export class AiController {
   @Post('generate-email')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  generateEmail(@Body() dto: GenerateEmailDto) {
-    return this.ai.generateEmail(dto);
+  generateEmail(@Body() dto: GenerateEmailDto, @Req() req: Request & { user?: { userId?: string } }) {
+    return this.ai.generateEmail(dto, req.user?.userId);
   }
 
   @Post('generate-reply')

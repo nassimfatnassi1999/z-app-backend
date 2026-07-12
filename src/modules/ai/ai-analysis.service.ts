@@ -42,7 +42,7 @@ export class AIAnalysisService {
     const retries = Number(this.config.get('GROQ_MAX_RETRIES')) || 2;
     try {
       const response = await fetchWithTimeout(
-        'https://api.groq.com/openai/v1/chat/completions',
+        `${this.config.get<string>('GROQ_BASE_URL', 'https://api.groq.com/openai/v1')}/chat/completions`,
         {
           method: 'POST',
           headers: {

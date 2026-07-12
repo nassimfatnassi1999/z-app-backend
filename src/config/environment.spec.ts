@@ -1,4 +1,5 @@
 import { validateEnvironment } from './environment';
+import { parseStrictBoolean } from './runtime-config';
 
 const valid = {
   DATABASE_URL: 'postgresql://localhost/z',
@@ -11,6 +12,20 @@ const valid = {
 };
 
 describe('validateEnvironment', () => {
+  it.each([['true', true], ['false', false]] as const)('strictly parses %s', (value, expected) => {
+    expect(parseStrictBoolean(value)).toBe(expected);
+  });
+
+  it.each(['TRUE', 'False', '1', '0', 'yes', 'no', ''])('rejects ambiguous boolean %p', (value) => {
+    expect(() => parseStrictBoolean(value)).toThrow();
+  });
+
+  it('rejects invalid numeric and URL configuration', () => {
+    expect(() => validateEnvironment({ ...valid, GROQ_TIMEOUT_MS: '-1' })).toThrow('GROQ_TIMEOUT_MS');
+    expect(() => validateEnvironment({ ...valid, GROQ_MAX_RETRIES: '6' })).toThrow('GROQ_MAX_RETRIES');
+    expect(() => validateEnvironment({ ...valid, GROQ_BASE_URL: 'not-a-url' })).toThrow('GROQ_BASE_URL');
+    expect(() => validateEnvironment({ ...valid, GROQ_GENERATION_MODEL: ' ' })).toThrow('GROQ_GENERATION_MODEL');
+  });
   it('accepts unique non-default secrets', () => {
     expect(validateEnvironment({ ...valid })).toMatchObject(valid);
   });

@@ -13,6 +13,7 @@ import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import { EmailGenerationService } from './email-generation.service';
 import { GeneratedEmailResponse } from './ai.types';
 import { resolveGroqModels } from '../../config/ai-models';
+import { PromptBuilderService } from './prompt-builder.service';
 
 const DETECTABLE_TONES = [
   'professional',
@@ -28,24 +29,6 @@ const DETECTABLE_TONES = [
   'complaint',
   'information_request',
 ] as const;
-
-const REFORMULATION_RULES = [
-  'You are a senior executive assistant. Transform the supplied transcript into a complete, polished professional email while preserving its exact meaning and original intent.',
-  'The supplied user text is the only source of factual information.',
-  'Do not invent or infer names, dates, reasons, commitments, deadlines, relationships, urgency, contact details, events, actions, or any other unsupported detail.',
-  'Do not add information absent from the supplied user text.',
-  'When information is missing, use neutral phrasing or omit it. Never fill a gap with an assumption.',
-  'Understand the user intent and improve grammar, spelling, clarity, and structure. Remove speech artifacts and repetition only when meaning is unchanged.',
-  'Generate a complete email body, not a summary, fragment, keyword list, or raw transcript.',
-  'Include a suitable greeting, context, request or action, and closing when appropriate, without inventing a recipient name or sender identity.',
-  'Keep the result concise but complete. Do not expand short input into a long email.',
-  'Use the same language as the transcript unless the user explicitly requests a translation.',
-  `When tone is auto or omitted, analyze the meaning and classify the dominant tone or intention as exactly one of: ${DETECTABLE_TONES.join(', ')}. Use that classification to write the email, and return it in the tone field.`,
-  'Interpret professional as neutral workplace communication, administrative as institutional or procedural, business as commercial or client-oriented, student as academic communication, friendly as warm and conversational, urgent as time-sensitive, formal as ceremonious or highly respectful, direct as short and action-oriented, apology as acknowledging fault or inconvenience, follow_up as a reminder or status check, complaint as reporting dissatisfaction or a problem, and information_request as asking for facts or clarification.',
-  'Base the classification on meaning and context, not on isolated keywords. Otherwise respect the requested tone without changing facts or intent.',
-  'When tone is custom, follow customTone as a writing-style instruction while still preserving every fact and the original intent.',
-  'A generic greeting or closing is allowed only if it introduces no person, fact, promise, or unsupported detail.',
-].join(' ');
 
 const REPAIR_INSTRUCTION =
   'The previous output was not a complete professional email. Generate a complete email with subject and body. Do not summarize. Do not paste the transcript. Return valid JSON only.';
@@ -63,11 +46,12 @@ export class AiService implements AiProvider {
   constructor(
     private readonly config: ConfigService,
     private readonly emailGeneration: EmailGenerationService,
+    private readonly prompts: PromptBuilderService = new PromptBuilderService(),
   ) {}
 
-  async generateEmail(dto: GenerateEmailDto): Promise<GeneratedEmailResponse> {
+  async generateEmail(dto: GenerateEmailDto, userId?: string): Promise<GeneratedEmailResponse> {
     this.assertSupportedLanguage(dto.language);
-    return this.emailGeneration.generate(dto);
+    return this.emailGeneration.generate(dto, userId);
   }
 
   async expandEmail(dto: ExpandEmailDto): Promise<{ email: string }> {
@@ -87,7 +71,7 @@ export class AiService implements AiProvider {
       `provider=groq model=${model} emailLength=${email.length} tone=${dto.tone || 'auto'} type=expand level=${level}`,
     );
     const response = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
+      `${this.config.get<string>('GROQ_BASE_URL', 'https://api.groq.com/openai/v1')}/chat/completions`,
       {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -95,30 +79,13 @@ export class AiService implements AiProvider {
           model,
           temperature: 0.15,
           response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: [
-                'You are an expert business email writer.',
-                `Expand the supplied email by ${targetGrowth} into a richer, more natural, and more professional version.`,
-                'Use the supplied email as the only source of information.',
-                'Preserve exactly the same intent, facts, language, recipient, and requested tone.',
-                'Never invent, infer, alter, or remove facts. Never change names, dates, amounts, places, commitments, or the main subject.',
-                'Only develop ideas already present, improve clarity and wording, and add natural transitions.',
-                'Generic connective wording is allowed only when it adds no new factual claim.',
-                'Return only valid JSON with exactly this shape: {"email":"..."}. No markdown or explanation.',
-              ].join(' '),
-            },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                email,
-                tone: dto.tone || 'auto',
-                language: dto.language || 'unknown',
-                expansionLevel: level,
-              }),
-            },
-          ],
+          messages: this.prompts.build('email-rewrite.v1', {
+            editedDraft: { body: email },
+            userEditedFields: ['body'],
+            rewriteInstruction: `Apply target enrichment ${level} (${targetGrowth}) without adding facts.`,
+            tone: dto.tone || 'auto',
+            language: dto.language || 'unknown',
+          }),
         }),
       },
       { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
@@ -160,7 +127,7 @@ export class AiService implements AiProvider {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
     const response = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
+      `${this.config.get<string>('GROQ_BASE_URL', 'https://api.groq.com/openai/v1')}/chat/completions`,
       {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -168,29 +135,16 @@ export class AiService implements AiProvider {
           model,
           temperature: 0.2,
           response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: [
-                REFORMULATION_RULES,
-                'Write a direct reply using the reply instruction as the sole source for claims made on behalf of the user.',
-                'The original email is context only. Do not invent an answer to any question that the reply instruction does not answer.',
-                'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
-                'Do not quote or append the original email and do not use markdown.',
-              ].join(' '),
-            },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                originalEmail: dto.originalEmail,
-                cleanedReplyInstruction: cleanedInstruction,
-                language: dto.language,
-                tone,
-                customTone: dto.customTone,
-                expectedSubject: subject,
-              }),
-            },
-          ],
+          messages: this.prompts.build('email-rewrite.v1', {
+            sourceContext: { originalEmail: dto.originalEmail },
+            editedDraft: null,
+            userEditedFields: [],
+            rewriteInstruction: cleanedInstruction,
+            language: dto.language,
+            tone,
+            customTone: dto.customTone,
+            expectedSubject: subject,
+          }),
         }),
       },
       { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
@@ -228,7 +182,7 @@ export class AiService implements AiProvider {
     issues: string[],
   ) {
     const response = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
+      `${this.config.get<string>('GROQ_BASE_URL', 'https://api.groq.com/openai/v1')}/chat/completions`,
       {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -236,30 +190,18 @@ export class AiService implements AiProvider {
           model,
           temperature: 0.2,
           response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: [
-                REFORMULATION_RULES,
-                'Write a complete professional reply. The original email is context only and the reply instruction is the sole source for claims made on behalf of the user.',
-                'Do not quote or append the original email.',
-                'Return ONLY JSON: {"subject":"...","body":"...","tone":"...","language":"..."}.',
-              ].join(' '),
+          messages: this.prompts.build('email-repair.v1', {
+            sourceContext: {
+              originalEmail: dto.originalEmail,
+              cleanedReplyInstruction: cleanedInstruction,
             },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                task: REPAIR_INSTRUCTION,
-                originalEmail: dto.originalEmail,
-                cleanedReplyInstruction: cleanedInstruction,
-                expectedSubject: subject,
-                requestedTone: dto.tone || 'auto',
-                customTone: dto.customTone,
-                previousReply,
-                qualityIssues: issues,
-              }),
-            },
-          ],
+            invalidDraft: previousReply,
+            blockingIssues: issues,
+            expectedSubject: subject,
+            requestedTone: dto.tone || 'auto',
+            customTone: dto.customTone,
+            task: REPAIR_INSTRUCTION,
+          }),
         }),
       },
       { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },

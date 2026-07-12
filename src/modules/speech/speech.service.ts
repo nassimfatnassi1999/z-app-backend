@@ -15,6 +15,7 @@ import {
 } from './languageMap';
 import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import { DEFAULT_DEEPGRAM_MODEL } from '../../config/ai-models';
+import { mapDeepgramResponse } from './deepgram.mapper';
 
 type DeepgramResponse = {
   results?: {
@@ -104,20 +105,31 @@ export class SpeechService implements SpeechProvider {
     this.debug('Deepgram request started');
     const params = new URLSearchParams(deepgramOptions);
 
-    const response = await fetchWithTimeout(
-      `https://api.deepgram.com/v1/listen?${params.toString()}`,
-      {
-        method: 'POST',
-        headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
-        body: file.buffer as unknown as BodyInit,
-      },
-      {
-        timeoutMs: 15_000,
-        retries: 1,
-        retryStatuses: [429, 502, 503, 504],
-        errorMessage: 'Deepgram transcription failed',
-      },
-    );
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        `${this.config.get<string>('DEEPGRAM_BASE_URL', 'https://api.deepgram.com/v1')}/listen?${params.toString()}`,
+        {
+          method: 'POST',
+          headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
+          body: file.buffer as unknown as BodyInit,
+        },
+        {
+          timeoutMs: Number(this.config.get('DEEPGRAM_TIMEOUT_MS')) || 15_000,
+          retries: Number(this.config.get('DEEPGRAM_MAX_RETRIES')) || 1,
+          retryStatuses: [429, 502, 503, 504],
+          errorMessage: 'Deepgram transcription failed',
+        },
+      );
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'STT_TIMEOUT',
+        message: 'La transcription a dépassé le délai autorisé.',
+        retryable: true,
+        stage: 'transcription',
+        requestId,
+      });
+    }
 
     if (!response.ok) {
       const body = await response.text();
@@ -131,21 +143,24 @@ export class SpeechService implements SpeechProvider {
         }),
       );
       throw new ServiceUnavailableException({
-        code: 'STT_PROVIDER_ERROR',
+          code: response.status === 429 ? 'STT_RATE_LIMITED' : 'STT_UNAVAILABLE',
         message: 'La transcription est momentanément indisponible.',
-        retryable: true,
+          retryable: true,
+          stage: 'transcription',
         requestId,
       });
     }
 
-    const json = (await response.json()) as DeepgramResponse;
-    const normalized = this.normalizeDeepgram(json, deepgramLanguage ?? null);
-    const finalLanguage =
-      deepgramLanguage === undefined &&
-      normalized.confidence !== null &&
-      normalized.confidence < 0.55
-        ? 'unknown'
-        : normalized.language;
+    const json: unknown = await response.json();
+    const mapped = mapDeepgramResponse(json, deepgramOptions.model, deepgramLanguage);
+    const normalized = {
+      transcript: mapped.transcript,
+      language: mapped.language,
+      confidence: mapped.transcriptionConfidence ?? null,
+      duration: (mapped.durationMs ?? 0) / 1000,
+    };
+    // Deepgram transcription confidence is not language-detection confidence.
+    const finalLanguage = normalized.language;
     const result = {
       ...normalized,
       language: finalLanguage,
@@ -166,9 +181,10 @@ export class SpeechService implements SpeechProvider {
     );
     if (!result.transcript)
       throw new BadRequestException({
-        code: 'STT_EMPTY_TRANSCRIPT',
+        code: 'EMPTY_TRANSCRIPTION',
         message: 'Le fournisseur a retourné une transcription vide.',
-        retryable: true,
+        retryable: false,
+        stage: 'transcription',
         requestId,
       });
     return result;
@@ -210,11 +226,10 @@ export class SpeechService implements SpeechProvider {
       return { ...options, language };
     }
 
-    const automaticLanguage = this.config.get<string>('DEEPGRAM_LANGUAGE')?.trim() || 'multi';
     const detectLanguage = this.config.get<string>('DEEPGRAM_DETECT_LANGUAGE') !== 'false';
     return {
       ...options,
-      language: automaticLanguage,
+      // Auto mode deliberately omits `language`; do not combine language=multi and detection.
       ...(detectLanguage ? { detect_language: 'true' } : {}),
     };
   }
@@ -241,7 +256,8 @@ export class SpeechService implements SpeechProvider {
   }
 
   private detectMime(buffer: Buffer | undefined, _declaredMime: string) {
-    if (!buffer || buffer.length < 4) throw new BadRequestException('Fichier audio vide.');
+    if (!buffer || buffer.length < 4)
+      throw new BadRequestException({ code: 'INVALID_AUDIO', message: 'Fichier audio vide.', retryable: false });
     const ascii = buffer.subarray(0, 12).toString('ascii');
     if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
     if (buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'audio/webm';
@@ -249,9 +265,11 @@ export class SpeechService implements SpeechProvider {
       return 'audio/mpeg';
     }
     if (ascii.slice(4, 8) === 'ftyp') return 'audio/mp4';
-    throw new BadRequestException(
-      'Le contenu du fichier ne correspond pas à un format audio supporté.',
-    );
+    throw new BadRequestException({
+      code: 'INVALID_AUDIO',
+      message: 'Le contenu du fichier ne correspond pas à un format audio supporté.',
+      retryable: false,
+    });
   }
 
   private debug(message: string) {

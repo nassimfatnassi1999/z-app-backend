@@ -1,8 +1,55 @@
 import { Injectable } from '@nestjs/common';
-import { EmailIntentAnalysis, GeneratedEmailResponse } from './ai.types';
+import {
+  DraftValidationResult,
+  EmailIntentAnalysis,
+  EmailSourceContext,
+  GeneratedEmailResponse,
+  ValidationIssue,
+} from './ai.types';
 
 @Injectable()
 export class EmailValidationService {
+  validateDraft(draft: GeneratedEmailResponse, source: EmailSourceContext): DraftValidationResult {
+    const issues: ValidationIssue[] = [];
+    const blocking = (code: string, message: string, field: ValidationIssue['field']) =>
+      issues.push({ code, severity: 'blocking', message, field });
+    const warning = (code: string, message: string, field: ValidationIssue['field']) =>
+      issues.push({ code, severity: 'warning', message, field });
+    if (!draft.subject.trim()) blocking('EMAIL_SUBJECT_EMPTY', 'Subject is empty', 'subject');
+    if (!draft.body.trim()) blocking('EMAIL_BODY_EMPTY', 'Body is empty', 'body');
+    if (draft.body.trim().length > 0 && draft.body.trim().length < 20)
+      warning('EMAIL_BODY_TOO_SHORT', 'Body is unusually short', 'body');
+    if (/```|\{\s*"(?:subject|body)"|^(?:subject|body|objet|corps)\s*:/im.test(draft.body))
+      blocking('EMAIL_FORMAT_INVALID', 'Raw JSON, Markdown, or field prefix is visible', 'body');
+    if (/\[(?:Votre nom|Nom du destinataire|Entreprise|Date|Objet|à compléter)\]/i.test(draft.body))
+      blocking('EMAIL_PLACEHOLDER_UNRESOLVED', 'Unresolved placeholder', 'body');
+    if (draft.language.trim().toLowerCase().split('-')[0] !== source.languageContext.effectiveOutputLanguage)
+      blocking('EMAIL_LANGUAGE_MISMATCH', 'Declared output language differs from resolved language', 'language');
+    const detected = this.detectLanguage(draft.body);
+    if (detected && detected !== source.languageContext.effectiveOutputLanguage)
+      warning('EMAIL_BODY_LANGUAGE_UNCERTAIN', `Body appears to be ${detected}`, 'language');
+
+    const output = this.normal(`${draft.subject} ${draft.body}`);
+    for (const fact of source.requiredFacts) {
+      if (!output.includes(this.normal(fact.value))) {
+        blocking('EMAIL_REQUIRED_FACT_MISSING', `Required ${fact.kind} is missing`, 'facts');
+      }
+    }
+    const sourceText = this.normal(`${source.rawTranscript} ${source.normalizedTranscript}`);
+    for (const token of this.factualTokens(`${draft.subject} ${draft.body}`)) {
+      if (!sourceText.includes(this.normal(token))) {
+        blocking('EMAIL_UNSUPPORTED_FACT', 'Draft contains an unsupported date, amount, number, email, or phone', 'facts');
+      }
+    }
+    for (const action of source.requestedActions) {
+      const significant = this.normal(action).split(' ').filter((part) => part.length > 3);
+      if (significant.length && !significant.some((part) => output.includes(part)))
+        warning('EMAIL_ACTION_MAY_BE_MISSING', 'Requested action may be missing', 'facts');
+    }
+    const hasBlocking = issues.some((issue) => issue.severity === 'blocking');
+    return { valid: !hasBlocking, issues, requiresRepair: hasBlocking };
+  }
+
   validate(
     draft: GeneratedEmailResponse,
     transcript: string,
@@ -65,5 +112,21 @@ export class EmailValidationService {
       .toLocaleLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, ' ')
       .trim();
+  }
+
+  private factualTokens(value: string): string[] {
+    return value.match(
+      /\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|\+?\d[\d ()/.:-]{2,}\d|\b\d+(?:[.,]\d+)?\s?(?:€|\$|USD|EUR|TND|DT)\b/giu,
+    ) || [];
+  }
+
+  private detectLanguage(value: string): string | undefined {
+    if (/[\u0600-\u06ff]/u.test(value)) return 'ar';
+    const words = this.normal(value).split(' ');
+    const score = (markers: Set<string>) => words.filter((word) => markers.has(word)).length;
+    const fr = score(new Set(['bonjour', 'merci', 'vous', 'votre', 'nous', 'je', 'pour', 'avec', 'cordialement']));
+    const en = score(new Set(['hello', 'thank', 'you', 'your', 'we', 'please', 'for', 'with', 'regards']));
+    if (Math.max(fr, en) < 2) return undefined;
+    return fr >= en ? 'fr' : 'en';
   }
 }
