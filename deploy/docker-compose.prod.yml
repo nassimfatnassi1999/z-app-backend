@@ -32,9 +32,9 @@ services:
       PORT: ${PORT:?PORT is required}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
       # Inside this container localhost points to z_backend, not PostgreSQL.
-      # Build the runtime URL from mandatory database credentials and the
-      # Compose service DNS name. The host-side DATABASE_URL remains unchanged.
-      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@z_postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      # The deploy scripts provide this URL from deploy/.env or from a generated
+      # runtime override when an existing PostgreSQL volume uses an older role.
+      DATABASE_URL: ${BACKEND_DATABASE_URL:?BACKEND_DATABASE_URL is required}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
       EMAIL_CODE_SECRET: ${EMAIL_CODE_SECRET:?EMAIL_CODE_SECRET is required}

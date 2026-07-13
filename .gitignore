@@ -12,6 +12,7 @@ build/
 .env
 .env.local
 .env.*.local
+deploy/.runtime.env
 
 # IDE
 .vscode/

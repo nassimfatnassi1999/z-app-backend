@@ -38,7 +38,11 @@ For an existing PostgreSQL volume, changing those variables does not make the
 official image update stored roles. Before NestJS starts, deployment therefore
 reconciles the configured role and password through PostgreSQL's local socket,
 updates database ownership when necessary, and verifies a real TCP login. This
-preserves all database data and never prints the password.
+preserves all database data and never prints the password. If the volume cannot
+be converted to the requested `POSTGRES_USER` but an existing role can be used
+safely, deployment writes `deploy/.runtime.env` with a generated
+`BACKEND_DATABASE_URL`; the file is ignored by Git and loaded automatically by
+all production Compose commands.
 
 ## Updating
 

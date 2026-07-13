@@ -10,6 +10,7 @@ if [[ ! -f "$ENV_FILE" && -f "$SCRIPT_DIR/.env.prod" ]]; then
   echo "⚠ Using legacy deploy/.env.prod; rename it to deploy/.env when convenient."
 fi
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.prod.yml"
+RUNTIME_ENV_FILE="$SCRIPT_DIR/.runtime.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "❌ Missing deploy/.env." >&2
@@ -30,8 +31,48 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+env_value() {
+  local name="$1" line value
+  line="$(grep -E "^${name}=" "$ENV_FILE" | tail -n 1 || true)"
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s' "$value"
+}
+
+url_encode() {
+  local raw="$1" encoded="" char hex i
+  LC_ALL=C
+  for ((i = 0; i < ${#raw}; i++)); do
+    char="${raw:i:1}"
+    case "$char" in
+      [a-zA-Z0-9.~_-]) encoded+="$char" ;;
+      *) printf -v hex '%%%02X' "'$char"; encoded+="$hex" ;;
+    esac
+  done
+  printf '%s' "$encoded"
+}
+
+default_backend_database_url() {
+  local user password database
+  user="$(url_encode "$(env_value POSTGRES_USER)")"
+  password="$(url_encode "$(env_value POSTGRES_PASSWORD)")"
+  database="$(url_encode "$(env_value POSTGRES_DB)")"
+  printf 'postgresql://%s:%s@z_postgres:5432/%s' "$user" "$password" "$database"
+}
+
 compose() {
-  BACKEND_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  local env_args=(--env-file "$ENV_FILE")
+  local backend_database_url
+  if [[ -f "$RUNTIME_ENV_FILE" ]]; then
+    env_args+=(--env-file "$RUNTIME_ENV_FILE")
+    BACKEND_ENV_FILE="$ENV_FILE" docker compose "${env_args[@]}" -f "$COMPOSE_FILE" "$@"
+  else
+    backend_database_url="$(default_backend_database_url)"
+    BACKEND_ENV_FILE="$ENV_FILE" BACKEND_DATABASE_URL="$backend_database_url" docker compose "${env_args[@]}" -f "$COMPOSE_FILE" "$@"
+  fi
 }
 
 echo "Stopping the previous deployment..."

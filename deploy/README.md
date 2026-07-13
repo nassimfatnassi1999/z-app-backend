@@ -37,7 +37,9 @@ make prod-deploy
 
 Every deployment validates the environment before Docker is stopped, rebuilds
 without cache, force-recreates the containers, waits for a healthy NestJS
-process and verifies Prisma. Run `make doctor` for a complete diagnostic. See
+process and verifies Prisma. If an old PostgreSQL volume still uses a previous
+database role, deployment aligns the backend runtime automatically without
+deleting data. Run `make doctor` for a complete diagnostic. See
 [`Deployment.md`](Deployment.md) for updates and rollback.
 
 Direct script usage also works:
