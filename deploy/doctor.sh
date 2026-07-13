@@ -23,6 +23,7 @@ fi
 if [[ ! -f "$ENV_FILE" ]] || ! docker info >/dev/null 2>&1; then
   fail "Backend container"
   fail "PostgreSQL"
+  fail "Database network target"
   fail "Prisma"
   fail "Deepgram configuration"
   fail "Groq configuration"
@@ -39,10 +40,13 @@ postgres_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.
 [[ "$postgres_health" == "healthy" ]] && ok "PostgreSQL" || fail "PostgreSQL (${postgres_health:-absent})"
 
 if [[ "$backend_state" == "running" ]]; then
+  database_host="$(compose exec -T z_backend node -e 'try { process.stdout.write(new URL(process.env.DATABASE_URL).hostname) } catch { process.exit(1) }' 2>/dev/null || true)"
+  [[ "$database_host" == "z_postgres" ]] && ok "Database network target" || fail "Database network target (${database_host:-invalid})"
   compose exec -T z_backend npx prisma migrate status >/dev/null 2>&1 && ok "Prisma" || fail "Prisma"
   compose exec -T z_backend sh -c 'test -n "$DEEPGRAM_API_KEY" && test -n "$DEEPGRAM_MODEL"' && ok "Deepgram configuration" || fail "Deepgram configuration"
   compose exec -T z_backend sh -c 'test -n "$GROQ_API_KEY" && test -n "$GROQ_BASE_URL" && test -n "$GROQ_EMAIL_MODEL" && test -n "$GROQ_EXTRACTION_MODEL" && test -n "$GROQ_VALIDATION_MODEL"' && ok "Groq configuration" || fail "Groq configuration"
 else
+  fail "Database network target"
   fail "Prisma"
   fail "Deepgram configuration"
   fail "Groq configuration"

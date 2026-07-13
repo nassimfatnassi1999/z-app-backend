@@ -29,6 +29,11 @@ Prisma migrations run inside the backend container before NestJS starts. The
 deployment fails if the container exits, restarts, misses its health deadline,
 or Prisma reports an error.
 
+The backend container always connects to the bundled PostgreSQL service through
+`z_postgres:5432`. A `DATABASE_URL` using `localhost` may still be kept for
+host-side tools; Compose replaces only the container runtime URL using the
+mandatory `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` values.
+
 ## Updating
 
 Pull the desired revision, review `.env.example` and
