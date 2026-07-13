@@ -38,6 +38,8 @@ export class GenerateEmailDto {
       'student',
       'formal',
       'business',
+      'persuasive',
+      'apologetic',
       'custom',
     ],
   })
@@ -56,6 +58,8 @@ export class GenerateEmailDto {
     'student',
     'formal',
     'business',
+    'persuasive',
+    'apologetic',
     'custom',
   ])
   tone?: string;

@@ -91,6 +91,27 @@ export interface EmailIntentAnalysis {
   missingCriticalInformation: string[];
   mustNotInvent: string[];
   confidence: number;
+  communicationGoal?: string;
+  coreMessage?: string;
+  supportingDetails?: string[];
+  requestedActions?: string[];
+  urgency?: 'none' | 'low' | 'normal' | 'high';
+  politenessLevel?: 'neutral' | 'respectful' | 'highly_formal';
+  subjectKeywords?: string[];
+  openingStrategy?: string;
+  closingStrategy?: string;
+  missingInformation?: string[];
+  forbiddenClaims?: string[];
+}
+
+export interface EmailQualityScore {
+  total: number;
+  subjectSpecificity: number;
+  clarity: number;
+  structure: number;
+  actionClarity: number;
+  toneConsistency: number;
+  factualFaithfulness: number;
 }
 
 export interface GeneratedEmailResponse {

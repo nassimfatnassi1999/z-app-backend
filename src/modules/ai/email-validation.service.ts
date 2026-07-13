@@ -4,6 +4,7 @@ import {
   EmailIntentAnalysis,
   EmailSourceContext,
   GeneratedEmailResponse,
+  EmailQualityScore,
   ValidationIssue,
 } from './ai.types';
 
@@ -16,9 +17,23 @@ export class EmailValidationService {
     const warning = (code: string, message: string, field: ValidationIssue['field']) =>
       issues.push({ code, severity: 'warning', message, field });
     if (!draft.subject.trim()) blocking('EMAIL_SUBJECT_EMPTY', 'Subject is empty', 'subject');
+    else if (this.isGenericSubject(draft.subject)) warning('EMAIL_SUBJECT_TOO_GENERIC', 'Subject is too generic', 'subject');
     if (!draft.body.trim()) blocking('EMAIL_BODY_EMPTY', 'Body is empty', 'body');
     if (draft.body.trim().length > 0 && draft.body.trim().length < 20)
       warning('EMAIL_BODY_TOO_SHORT', 'Body is unusually short', 'body');
+    const words = draft.body.trim().split(/\s+/).filter(Boolean);
+    const paragraphs = draft.body.split(/\n\s*\n/).map((v) => v.trim()).filter(Boolean);
+    if (/^(?:bonjour[^\n]*\n+)?\s*(?:j['’]espère que vous allez bien|je me permets de vous contacter|je vous écris pour)/i.test(draft.body))
+      warning('EMAIL_OPENING_TOO_GENERIC', 'Opening is formulaic', 'body');
+    if (paragraphs.some((paragraph) => paragraph.split(/\s+/).length > 110))
+      warning('EMAIL_BODY_TOO_DENSE', 'A paragraph is too dense', 'body');
+    if (paragraphs.length > 8) warning('EMAIL_BODY_TOO_FRAGMENTED', 'Body is too fragmented', 'body');
+    if (words.length > ({ light: 170, medium: 270, full: 420 }[source.targetEnrichmentLevel]))
+      warning('EMAIL_EXCESSIVE_LENGTH', 'Body exceeds the target level', 'body');
+    if (words.length < ({ light: 35, medium: 70, full: 110 }[source.targetEnrichmentLevel]))
+      warning('EMAIL_INSUFFICIENT_DETAIL', 'Body may be too sparse for the target level', 'body');
+    if (/dans l.attente de votre retour|n.hésitez pas à me contacter pour toute information complémentaire/i.test(draft.body))
+      warning('EMAIL_CLOSING_TOO_GENERIC', 'Closing is formulaic', 'body');
     if (/```|\{\s*"(?:subject|body)"|^(?:subject|body|objet|corps)\s*:/im.test(draft.body))
       blocking('EMAIL_FORMAT_INVALID', 'Raw JSON, Markdown, or field prefix is visible', 'body');
     if (/\[(?:Votre nom|Nom du destinataire|Entreprise|Date|Objet|à compléter)\]/i.test(draft.body))
@@ -44,10 +59,22 @@ export class EmailValidationService {
     for (const action of source.requestedActions) {
       const significant = this.normal(action).split(' ').filter((part) => part.length > 3);
       if (significant.length && !significant.some((part) => output.includes(part)))
-        warning('EMAIL_ACTION_MAY_BE_MISSING', 'Requested action may be missing', 'facts');
+        warning('EMAIL_ACTION_UNCLEAR', 'Requested action may be missing', 'facts');
     }
     const hasBlocking = issues.some((issue) => issue.severity === 'blocking');
     return { valid: !hasBlocking, issues, requiresRepair: hasBlocking };
+  }
+
+  score(draft: GeneratedEmailResponse, source: EmailSourceContext): EmailQualityScore {
+    const issues = this.validateDraft(draft, source).issues;
+    const has = (code: string) => issues.some((issue) => issue.code === code);
+    const subjectSpecificity = has('EMAIL_SUBJECT_EMPTY') ? 0 : has('EMAIL_SUBJECT_TOO_GENERIC') ? 8 : 15;
+    const clarity = has('EMAIL_PURPOSE_UNCLEAR') ? 8 : has('EMAIL_BODY_TOO_DENSE') ? 13 : 17;
+    const structure = has('EMAIL_FORMAT_INVALID') ? 0 : has('EMAIL_BODY_TOO_FRAGMENTED') || has('EMAIL_BODY_TOO_DENSE') ? 10 : 15;
+    const actionClarity = has('EMAIL_ACTION_UNCLEAR') ? 7 : 15;
+    const toneConsistency = has('EMAIL_TONE_NOT_DISTINCT') ? 8 : 13;
+    const factualFaithfulness = issues.some((i) => i.code === 'EMAIL_UNSUPPORTED_FACT' || i.code === 'EMAIL_REQUIRED_FACT_MISSING') ? 0 : 25;
+    return { total: subjectSpecificity + clarity + structure + actionClarity + toneConsistency + factualFaithfulness, subjectSpecificity, clarity, structure, actionClarity, toneConsistency, factualFaithfulness };
   }
 
   validate(
@@ -112,6 +139,10 @@ export class EmailValidationService {
       .toLocaleLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, ' ')
       .trim();
+  }
+
+  private isGenericSubject(value: string): boolean {
+    return /^(?:demande|bonjour|information|important|message|email|e-mail|contact|question)$/i.test(value.trim());
   }
 
   private factualTokens(value: string): string[] {

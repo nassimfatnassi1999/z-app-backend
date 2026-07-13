@@ -20,6 +20,7 @@ export const ENVIRONMENT_DEFAULTS = {
   GROQ_GENERATION_MODEL: 'openai/gpt-oss-120b',
   AI_REPAIR_TEMPERATURE: '0.1',
   AI_ENABLE_REPAIR: 'true',
+  AI_EMAIL_PROMPT_VERSION: 'v2',
   DEEPGRAM_BASE_URL: 'https://api.deepgram.com/v1',
   DEEPGRAM_LANGUAGE_STRATEGY: 'auto',
   DEEPGRAM_DEFAULT_LANGUAGE: 'multi',
@@ -109,6 +110,9 @@ export function validateEnvironment(config: Record<string, unknown>) {
   }
   if (!['auto', 'forced'].includes(String(config.DEEPGRAM_LANGUAGE_STRATEGY))) {
     throw new Error('DEEPGRAM_LANGUAGE_STRATEGY must be auto or forced');
+  }
+  if (!['v1', 'v2'].includes(String(config.AI_EMAIL_PROMPT_VERSION))) {
+    throw new Error('AI_EMAIL_PROMPT_VERSION must be v1 or v2');
   }
   for (const name of ['GROQ_MAX_RETRIES', 'DEEPGRAM_MAX_RETRIES']) {
     parseBoundedNumber(config[name], name, { min: 0, max: 5, integer: true });

@@ -41,4 +41,20 @@ describe('EmailValidationService structured validation', () => {
       expect.arrayContaining([expect.objectContaining({ code })]),
     );
   });
+
+  it('warns for a generic subject without requesting repair', () => {
+    const result = service.validateDraft({ ...draft, subject: 'Demande' }, source);
+    expect(result.valid).toBe(true);
+    expect(result.requiresRepair).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'EMAIL_SUBJECT_TOO_GENERIC', severity: 'warning' }),
+    ]));
+  });
+
+  it('computes a deterministic local score without an LLM call', () => {
+    expect(service.score(draft, source)).toMatchObject({
+      total: expect.any(Number),
+      factualFaithfulness: 25,
+    });
+  });
 });

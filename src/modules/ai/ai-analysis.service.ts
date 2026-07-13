@@ -132,6 +132,17 @@ export class AIAnalysisService {
       missingCriticalInformation: list(v.missingCriticalInformation),
       mustNotInvent: list(v.mustNotInvent),
       confidence: Math.max(0, Math.min(1, Number(v.confidence) || 0)),
+      communicationGoal: str(v.communicationGoal, str(v.mainIntent)),
+      coreMessage: str(v.coreMessage, str(v.mainIntent)),
+      supportingDetails: list(v.supportingDetails),
+      requestedActions: list(v.requestedActions),
+      urgency: ['none', 'low', 'normal', 'high'].includes(v.urgency) ? v.urgency : 'normal',
+      politenessLevel: ['neutral', 'respectful', 'highly_formal'].includes(v.politenessLevel) ? v.politenessLevel : 'respectful',
+      subjectKeywords: list(v.subjectKeywords),
+      openingStrategy: str(v.openingStrategy),
+      closingStrategy: str(v.closingStrategy),
+      missingInformation: list(v.missingInformation),
+      forbiddenClaims: list(v.forbiddenClaims),
     };
   }
 }
