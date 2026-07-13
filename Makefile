@@ -5,7 +5,7 @@ export DATABASE_URL=postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost
 POSTGRES_USER?=postgres
 POSTGRES_DB?=zdb
 
-.PHONY: dev stop reset-db logs wait-db prod-deploy prod-stop prod-undeploy prod-monitor prod-menu
+.PHONY: dev stop reset-db logs wait-db prod-deploy prod-stop prod-undeploy prod-monitor prod-menu doctor validate-env
 
 dev:
 	$(COMPOSE) up -d $(DB_SERVICE)
@@ -47,3 +47,10 @@ prod-monitor:
 
 prod-menu:
 	cd deploy && ./manage.sh
+
+validate-env:
+	./scripts/validate-env.sh .env
+	./scripts/check-env-example.sh .env .env.example
+
+doctor:
+	cd deploy && ./doctor.sh

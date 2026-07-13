@@ -20,6 +20,9 @@ import { ComposeModule } from './modules/compose/compose.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      // Production receives an explicit Compose environment. Never depend on
+      // a file being copied into the runtime image.
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
       expandVariables: true,
       validate: validateEnvironment,
     }),

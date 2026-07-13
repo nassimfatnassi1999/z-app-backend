@@ -27,11 +27,19 @@ From `z-backend`:
 make prod-deploy
 ```
 
-The first run creates `deploy/.env.prod` and stops. Edit it with real secrets, then rerun:
+If a validated root `.env` exists, the first run creates `deploy/.env.prod`
+from it and translates a local PostgreSQL hostname to the internal
+`z_postgres` service. Otherwise it creates the template and stops so secrets
+can be configured. Then rerun:
 
 ```bash
 make prod-deploy
 ```
+
+Every deployment validates the environment before Docker is stopped, rebuilds
+without cache, force-recreates the containers, waits for a healthy NestJS
+process and verifies Prisma. Run `make doctor` for a complete diagnostic. See
+[`Deployment.md`](Deployment.md) for updates and rollback.
 
 Direct script usage also works:
 

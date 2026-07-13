@@ -15,6 +15,24 @@ The API runs on port `3000` and listens on all interfaces, so devices on the sam
 Swagger is available at `http://<MAC_LOCAL_IP>:3000/api/docs`.
 Health is available at `http://<MAC_LOCAL_IP>:3000/health`.
 
+## Production deployment
+
+Production uses `deploy/.env.prod`, never an implicit shell environment. On an
+existing installation, newly-required variables are copied from the configured
+root `.env` only when they are absent from `.env.prod`; deployment-specific
+values already present in `.env.prod` are preserved.
+
+```bash
+make prod-deploy
+make doctor
+```
+
+The deploy command validates required variables before touching Docker, stops
+the old stack, performs a no-cache build, force-recreates containers, waits for
+the Nest healthcheck, verifies Prisma migration status and prints sanitized
+service logs. See `deploy/Deployment.md` for first deployment, updates and
+rollback.
+
 ## Deepgram Speech Languages
 
 No special Deepgram account configuration is usually required for language

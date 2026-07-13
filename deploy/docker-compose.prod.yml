@@ -4,9 +4,9 @@ services:
     container_name: z_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-zdb}
-      POSTGRES_USER: ${POSTGRES_USER:-z_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     ports:
       - "${POSTGRES_HOST_PORT:-55432}:${POSTGRES_CONTAINER_PORT:-5432}"
     volumes:
@@ -26,8 +26,25 @@ services:
       context: ..
       dockerfile: Dockerfile
     env_file:
-      - path: .env.prod
-        required: false
+      - ${BACKEND_ENV_FILE:-.env.prod}
+    environment:
+      NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
+      PORT: ${PORT:?PORT is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      EMAIL_CODE_SECRET: ${EMAIL_CODE_SECRET:?EMAIL_CODE_SECRET is required}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:?DEEPGRAM_API_KEY is required}
+      DEEPGRAM_MODEL: ${DEEPGRAM_MODEL:?DEEPGRAM_MODEL is required}
+      GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY is required}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:?GROQ_BASE_URL is required}
+      GROQ_EMAIL_MODEL: ${GROQ_EMAIL_MODEL:?GROQ_EMAIL_MODEL is required}
+      GROQ_EXTRACTION_MODEL: ${GROQ_EXTRACTION_MODEL:?GROQ_EXTRACTION_MODEL is required}
+      GROQ_VALIDATION_MODEL: ${GROQ_VALIDATION_MODEL:?GROQ_VALIDATION_MODEL is required}
+      AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:?AI_REQUEST_TIMEOUT_MS is required}
+      AI_MAX_REPAIR_ATTEMPTS: ${AI_MAX_REPAIR_ATTEMPTS:?AI_MAX_REPAIR_ATTEMPTS is required}
+      MAIL_ENABLED: ${MAIL_ENABLED:?MAIL_ENABLED is required}
     ports:
       - "${BACKEND_HOST_PORT:-3002}:${BACKEND_CONTAINER_PORT:-3000}"
     depends_on:
