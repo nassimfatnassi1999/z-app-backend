@@ -4,12 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ENV_FILE="$SCRIPT_DIR/.env.prod"
+ENV_FILE="${Z_PROD_ENV_FILE:-$SCRIPT_DIR/.env}"
+if [[ ! -f "$ENV_FILE" && -f "$SCRIPT_DIR/.env.prod" ]]; then ENV_FILE="$SCRIPT_DIR/.env.prod"; fi
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.prod.yml"
 MODE="${1:-default}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing deploy/.env.prod. Run deploy/deploy.sh first to create it from the example."
+  echo "Missing deploy/.env. Configure it before monitoring."
   exit 1
 fi
 
@@ -19,7 +20,7 @@ source "$ENV_FILE"
 set +a
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  BACKEND_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
 show_ps() {

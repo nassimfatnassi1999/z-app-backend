@@ -26,7 +26,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     env_file:
-      - ${BACKEND_ENV_FILE:-.env.prod}
+      - ${BACKEND_ENV_FILE:-.env}
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       PORT: ${PORT:?PORT is required}

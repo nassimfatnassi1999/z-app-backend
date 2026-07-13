@@ -17,10 +17,9 @@ Health is available at `http://<MAC_LOCAL_IP>:3000/health`.
 
 ## Production deployment
 
-Production uses `deploy/.env.prod`, never an implicit shell environment. On an
-existing installation, newly-required variables are copied from the configured
-root `.env` only when they are absent from `.env.prod`; deployment-specific
-values already present in `.env.prod` are preserved.
+Production uses `deploy/.env`, never `.env.example` or an implicit shell
+environment. The legacy name `deploy/.env.prod` remains accepted for existing
+installations.
 
 ```bash
 make prod-deploy

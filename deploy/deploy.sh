@@ -4,29 +4,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ENV_FILE="$SCRIPT_DIR/.env.prod"
-EXAMPLE_ENV_FILE="$SCRIPT_DIR/.env.prod.example"
+ENV_FILE="${Z_PROD_ENV_FILE:-$SCRIPT_DIR/.env}"
+if [[ ! -f "$ENV_FILE" && -f "$SCRIPT_DIR/.env.prod" ]]; then
+  ENV_FILE="$SCRIPT_DIR/.env.prod"
+  echo "⚠ Using legacy deploy/.env.prod; rename it to deploy/.env when convenient."
+fi
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.prod.yml"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  if [[ -f "$SCRIPT_DIR/../.env" ]]; then
-    "$SCRIPT_DIR/../scripts/validate-env.sh" "$SCRIPT_DIR/../.env"
-    cp "$SCRIPT_DIR/../.env" "$ENV_FILE"
-    # Inside the backend container, localhost is not the bundled database.
-    sed -i.bak 's/@localhost:/@z_postgres:/' "$ENV_FILE"
-    rm -f "$ENV_FILE.bak"
-    echo "✓ Created deploy/.env.prod from the validated root .env"
-  else
-    cp "$EXAMPLE_ENV_FILE" "$ENV_FILE"
-    echo "Created deploy/.env.prod from deploy/.env.prod.example."
-    echo "Edit deploy/.env.prod with real secrets, then rerun."
-    exit 1
-  fi
+  echo "❌ Missing deploy/.env." >&2
+  echo "Create it with real production values before deploying:" >&2
+  echo "  cp deploy/.env.prod.example deploy/.env" >&2
+  exit 1
 fi
 
-"$SCRIPT_DIR/../scripts/sync-production-env.sh" "$SCRIPT_DIR/../.env" "$ENV_FILE"
 "$SCRIPT_DIR/../scripts/validate-env.sh" "$ENV_FILE"
-"$SCRIPT_DIR/../scripts/check-env-example.sh" "$ENV_FILE" "$EXAMPLE_ENV_FILE"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is not installed or not available in PATH."

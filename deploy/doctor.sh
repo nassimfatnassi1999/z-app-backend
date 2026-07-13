@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/.env.prod"
+ENV_FILE="${Z_PROD_ENV_FILE:-$SCRIPT_DIR/.env}"
+if [[ ! -f "$ENV_FILE" && -f "$SCRIPT_DIR/.env.prod" ]]; then ENV_FILE="$SCRIPT_DIR/.env.prod"; fi
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.prod.yml"
 failures=0
 
@@ -16,7 +17,7 @@ docker compose version >/dev/null 2>&1 && ok "Docker Compose" || fail "Docker Co
 if "$SCRIPT_DIR/../scripts/validate-env.sh" "$ENV_FILE"; then
   ok "Variables d'environnement"
 else
-  fail "Variables d'environnement (run scripts/validate-env.sh deploy/.env.prod)"
+  fail "Variables d'environnement (run scripts/validate-env.sh deploy/.env)"
 fi
 
 if [[ ! -f "$ENV_FILE" ]] || ! docker info >/dev/null 2>&1; then

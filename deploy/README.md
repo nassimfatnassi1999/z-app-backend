@@ -27,12 +27,11 @@ From `z-backend`:
 make prod-deploy
 ```
 
-If a validated root `.env` exists, the first run creates `deploy/.env.prod`
-from it and translates a local PostgreSQL hostname to the internal
-`z_postgres` service. Otherwise it creates the template and stops so secrets
-can be configured. Then rerun:
+Production reads `deploy/.env` directly. Create it once with real production
+values (the legacy `deploy/.env.prod` name remains supported):
 
 ```bash
+cp deploy/.env.prod.example deploy/.env
 make prod-deploy
 ```
 

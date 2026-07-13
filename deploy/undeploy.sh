@@ -4,11 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ENV_FILE="$SCRIPT_DIR/.env.prod"
+ENV_FILE="${Z_PROD_ENV_FILE:-$SCRIPT_DIR/.env}"
+if [[ ! -f "$ENV_FILE" && -f "$SCRIPT_DIR/.env.prod" ]]; then ENV_FILE="$SCRIPT_DIR/.env.prod"; fi
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.prod.yml"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing deploy/.env.prod. Nothing to undeploy with this compose environment."
+  echo "Missing deploy/.env. Nothing to undeploy with this compose environment."
   exit 1
 fi
 
@@ -23,9 +24,9 @@ fi
 read -r -p "Also delete database volume? Type DELETE to confirm: " delete_volume
 
 if [[ "$delete_volume" == "DELETE" ]]; then
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -v
+  BACKEND_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -v
   echo "Z containers removed and PostgreSQL volume deleted."
 else
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
+  BACKEND_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
   echo "Z containers removed. PostgreSQL data preserved."
 fi
