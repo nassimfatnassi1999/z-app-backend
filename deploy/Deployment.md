@@ -34,6 +34,12 @@ The backend container always connects to the bundled PostgreSQL service through
 host-side tools; Compose replaces only the container runtime URL using the
 mandatory `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` values.
 
+For an existing PostgreSQL volume, changing those variables does not make the
+official image update stored roles. Before NestJS starts, deployment therefore
+reconciles the configured role and password through PostgreSQL's local socket,
+updates database ownership when necessary, and verifies a real TCP login. This
+preserves all database data and never prints the password.
+
 ## Updating
 
 Pull the desired revision, review `.env.example` and

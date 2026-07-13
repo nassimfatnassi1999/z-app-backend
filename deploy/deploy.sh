@@ -40,8 +40,25 @@ compose down --remove-orphans
 echo "Building production images without cache..."
 compose build --no-cache
 
-echo "Starting freshly-created containers..."
-compose up -d --force-recreate
+echo "Starting PostgreSQL..."
+compose up -d --force-recreate z_postgres
+
+echo "Waiting for PostgreSQL healthcheck..."
+for attempt in $(seq 1 24); do
+  postgres_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' z_postgres 2>/dev/null || true)"
+  [[ "$postgres_health" == "healthy" ]] && break
+  if [[ "$attempt" == "24" ]]; then
+    echo "❌ PostgreSQL did not become healthy before timeout." >&2
+    compose logs --tail=100 z_postgres >&2
+    exit 1
+  fi
+  sleep 5
+done
+
+"$SCRIPT_DIR/reconcile-postgres.sh" "$ENV_FILE"
+
+echo "Starting freshly-created backend container..."
+compose up -d --force-recreate z_backend
 
 echo "Waiting for the backend healthcheck..."
 for attempt in $(seq 1 36); do
