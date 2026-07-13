@@ -7,7 +7,6 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { AiPipelineException } from '../../modules/ai/ai-pipeline.error';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -16,7 +15,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request & { requestId?: string }>();
+    const request = ctx.getRequest<Request>();
 
     let status: number;
     let message: string;
@@ -37,19 +36,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = String(exceptionResponse);
         error = exception.message;
       }
-      if (exception instanceof AiPipelineException) {
-        this.logger.error(
-          JSON.stringify({
-            event: 'ai_pipeline_error',
-            requestId: exception.requestId,
-            code: exception.code,
-            retryable: exception.retryable,
-            errorType: exception.constructor.name,
-            internalMessage: exception.internalMessage,
-          }),
-          exception.stack,
-        );
-      }
     } else {
       status = HttpStatus.INTERNAL_SERVER_ERROR;
       message = 'Internal server error';
@@ -57,20 +43,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
       this.logger.error('Unhandled exception', exception);
     }
 
-    const requestId = String(extra.requestId || request.requestId || 'unknown');
     response.status(status).json({
       success: false,
       data: null,
       message,
       error,
       ...extra,
-      requestId,
-      errorDetails: {
-        code: String(extra.code || 'UNKNOWN_ERROR'),
-        message,
-        retryable: Boolean(extra.retryable),
-        requestId,
-      },
       timestamp: new Date().toISOString(),
       path: request.url,
     });

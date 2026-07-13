@@ -1,24 +1,27 @@
 import { Module } from '@nestjs/common';
 import { AiController } from './ai.controller';
 import { AiService } from './ai.service';
-import { AIAnalysisService } from './ai-analysis.service';
-import { EmailGenerationService } from './email-generation.service';
-import { EmailValidationService } from './email-validation.service';
-import { PromptBuilderService } from './prompt-builder.service';
-import { TranscriptCleanerService } from './transcript-cleaner.service';
-import { PromptRegistry } from './prompts/prompt-registry';
+import { AiPipelineController } from './ai-pipeline.controller';
+import { IdempotencyService } from '../../common/idempotency/idempotency.service';
+import { GroqJsonProvider } from './providers/groq-json.provider';
+import { TranscriptExtractionService } from './services/transcript-extraction.service';
+import { EmailGenerationService } from './services/email-generation.service';
+import { EmailValidationService } from './services/email-validation.service';
+import { EmailRepairService } from './services/email-repair.service';
+import { AiOrchestratorService } from './services/ai-orchestrator.service';
 
 @Module({
-  controllers: [AiController],
+  controllers: [AiController, AiPipelineController],
   providers: [
     AiService,
-    AIAnalysisService,
+    IdempotencyService,
+    GroqJsonProvider,
+    TranscriptExtractionService,
     EmailGenerationService,
     EmailValidationService,
-    PromptBuilderService,
-    TranscriptCleanerService,
-    PromptRegistry,
+    EmailRepairService,
+    AiOrchestratorService,
   ],
-  exports: [AiService, EmailGenerationService],
+  exports: [AiService, AiOrchestratorService, IdempotencyService],
 })
 export class AiModule {}

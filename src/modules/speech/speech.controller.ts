@@ -2,7 +2,7 @@ import {
   Body,
   BadRequestException,
   Controller,
-  Req,
+  Headers,
   Post,
   UploadedFiles,
   UseGuards,
@@ -13,15 +13,17 @@ import { ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { SpeechService } from './speech.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ApiBearerAuth } from '@nestjs/swagger';
-import { Request } from 'express';
-import { VoiceEmailDto } from './dto/voice-email.dto';
+import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 
 @ApiTags('speech')
 @Controller('speech')
 export class SpeechController {
-  constructor(private readonly speech: SpeechService) {}
+  constructor(
+    private readonly speech: SpeechService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Post('transcribe')
   @UseGuards(JwtAuthGuard)
@@ -38,17 +40,16 @@ export class SpeechController {
   )
   transcribe(
     @UploadedFiles() files: { audio?: any[]; file?: any[] },
-    @Body() dto: VoiceEmailDto,
-    @Req() request: Request & { user?: { sub?: string }; requestId?: string },
+    @Body('language') language = 'auto',
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const file = files.audio?.[0] ?? files.file?.[0];
     if (!file) {
       throw new BadRequestException('Aucun fichier audio reçu.');
     }
 
-    return this.speech.transcribe(file, dto.speechLanguageMode || dto.language || 'auto', {
-      requestId: request.requestId,
-      actorId: request.user?.sub || request.header('x-device-id'),
-    });
+    return this.idempotency.run('speech:transcribe', idempotencyKey, () =>
+      this.speech.transcribe(file, language),
+    );
   }
 }

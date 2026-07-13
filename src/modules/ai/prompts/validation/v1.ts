@@ -1,0 +1,2 @@
+export const validationPromptV1 = `Audit the email against the transcript and extracted facts. Be strict about names, dates, times, amounts, places, negations, obligations, commitments, requests and recipient. Return JSON with exactly supportedFacts, missingFacts, unsupportedClaims, negationPreserved, languageMatch, toneMatch, actionClear, pass. pass may be true only when every other check passes and both issue arrays are empty. No markdown.`;
+export const validationPromptVersion = 'email-validation-v1';

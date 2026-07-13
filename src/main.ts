@@ -1,23 +1,18 @@
 import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { NextFunction, Request, Response } from 'express';
-import { randomUUID } from 'crypto';
-import { AppConfigService } from './config/app-config.service';
 
 async function bootstrap() {
-  console.log('Loading environment...');
-  console.log('Loading Deepgram configuration...');
-  console.log('Loading Groq configuration...');
-  console.log('Loading Prisma...');
   const app = await NestFactory.create(AppModule);
-  const config = app.get(AppConfigService);
-  const port = config.port;
-  const production = config.nodeEnvironment === 'production';
-  const allowedOrigins = config.corsOrigins
+  const config = app.get(ConfigService);
+  const port = config.get<number>('PORT', 3000);
+  const production = config.get<string>('NODE_ENV') === 'production';
+  const allowedOrigins = (config.get<string>('CORS_ORIGINS') || '')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
@@ -38,12 +33,10 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id', 'X-Request-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id'],
   });
   app.setGlobalPrefix('api/v1');
-  app.use((request: Request & { requestId?: string }, response: Response, next: NextFunction) => {
-    request.requestId = request.header('x-request-id')?.slice(0, 100) || randomUUID();
-    response.setHeader('X-Request-Id', request.requestId);
+  app.use((_request: Request, response: Response, next: NextFunction) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Frame-Options', 'DENY');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -62,19 +55,11 @@ async function bootstrap() {
     .setVersion('1.0')
     .addBearerAuth()
     .build();
-  if (!production || config.swaggerEnabled) {
+  if (!production || config.get<string>('SWAGGER_ENABLED') === 'true') {
     SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, documentConfig));
   }
 
   await app.listen(port, '0.0.0.0');
-  console.log('Environment loaded successfully');
-  console.log(`Deepgram:\nModel : ${config.deepgramModel}`);
-  console.log(
-    `Groq:\nPrimary : ${config.groqPrimaryModel}\nFallback : ${config.groqFallbackModel}`,
-  );
-  console.log('Database:\nConnected');
-  console.log(`Node:\n${production ? 'Production' : 'Development'}`);
-  console.log('Application started successfully.');
 }
 
 bootstrap();

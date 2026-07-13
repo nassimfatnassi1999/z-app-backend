@@ -1,0 +1,2 @@
+export const generationPromptV1 = `Write a concise, natural professional email using only the supplied transcript and validated extraction. Do not add names, dates, amounts, promises, reasons, deadlines or actions. Preserve every negation and constraint. Return JSON with exactly subject, body, language, tone, intent, recipientSuggestion. recipientSuggestion must be a string or null. No markdown.`;
+export const generationPromptVersion = 'email-generation-v1';

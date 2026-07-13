@@ -1,11 +1,6 @@
-import { HttpException, ServiceUnavailableException } from '@nestjs/common';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiService } from './ai.service';
-import { EmailGenerationService } from './email-generation.service';
-import { EmailValidationService } from './email-validation.service';
-import { PromptBuilderService } from './prompt-builder.service';
-import { TranscriptCleanerService } from './transcript-cleaner.service';
-import { AIAnalysisService } from './ai-analysis.service';
 
 const transcript =
   'Je veux envoyer un mail à mon responsable pour demander un congé vendredi prochain pour raison personnelle.';
@@ -34,54 +29,12 @@ describe('AiService email quality validation', () => {
   });
 
   function service(apiKey = 'test-key') {
-    const config = new ConfigService({
-      GROQ_API_KEY: apiKey,
-      GROQ_MODEL: 'test-model',
-      GROQ_PRIMARY_MODEL: 'test-model',
-      GROQ_ANALYSIS_MODEL: 'test-model',
-      GROQ_GENERATION_MODEL: 'test-model',
-    });
-    const prompts = new PromptBuilderService();
-    const cleaner = new TranscriptCleanerService();
-    const validation = new EmailValidationService();
-    const analysis = {
-      analyze: jest.fn().mockResolvedValue({
-        model: 'test-model',
-        fallbackUsed: false,
-        analysis: {
-          sourceLanguage: 'fr',
-          outputLanguage: 'fr',
-          outputLanguageSource: 'detected_language',
-          emailType: 'leave_request',
-          mainIntent: 'Demander un congé',
-          recipient: {
-            name: null,
-            role: 'responsable',
-            organization: null,
-            relationship: 'manager',
-          },
-          sender: { name: null, role: null, organization: null },
-          tone: 'professional',
-          requestedLength: 'medium',
-          subjectGoal: 'Demande de congé',
-          facts: [],
-          dates: [],
-          amounts: [],
-          locations: [],
-          actionRequested: 'Accorder le congé',
-          deadline: null,
-          attachmentsMentioned: [],
-          constraints: [],
-          sensitiveDetails: [],
-          ambiguousDetails: [],
-          missingCriticalInformation: [],
-          mustNotInvent: [],
-          confidence: 0.9,
-        },
+    return new AiService(
+      new ConfigService({
+        GROQ_API_KEY: apiKey,
+        GROQ_MODEL: 'test-model',
       }),
-    } as unknown as AIAnalysisService;
-    const generation = new EmailGenerationService(config, cleaner, prompts, validation, analysis);
-    return new AiService(config, generation);
+    );
   }
 
   it('returns a complete valid Groq email without retrying', async () => {
@@ -98,23 +51,6 @@ describe('AiService email quality validation', () => {
     expect(result.subject).toBe(completeEmail.subject);
     expect(result.body).toContain('Je souhaite solliciter un congé');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('uses Llama only after the configured primary model fails', async () => {
-    const fetchMock = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(groqResponse('{}', false))
-      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)));
-
-    const result = await service().generateEmail({ transcript, language: 'fr', tone: 'auto' });
-    const models = fetchMock.mock.calls.map(
-      (call) => JSON.parse(String((call[1] as RequestInit).body)).model,
-    );
-    expect(models).toEqual(['test-model', 'llama-3.3-70b-versatile']);
-    expect(result.metadata).toMatchObject({
-      fallbackUsed: true,
-      actualGroqModelUsed: 'llama-3.3-70b-versatile',
-    });
   });
 
   it.each([
@@ -144,7 +80,7 @@ describe('AiService email quality validation', () => {
     await expect(
       service().generateEmail({ transcript, tone: 'custom', customTone: '  ' }),
     ).rejects.toMatchObject({
-      message: 'Le ton personnalisé est requis.',
+      message: 'customTone is required when tone is custom',
     });
   });
 
@@ -164,14 +100,15 @@ describe('AiService email quality validation', () => {
     expect(result.tone).toBe('custom');
   });
 
-  it('does not make a second LLM call for non-blocking quality warnings', async () => {
+  it('retries once when Groq returns the raw transcript', async () => {
     const weakEmail = {
       ...completeEmail,
       body: transcript,
     };
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(groqResponse(JSON.stringify(weakEmail)));
+      .mockResolvedValueOnce(groqResponse(JSON.stringify(weakEmail)))
+      .mockResolvedValueOnce(groqResponse(JSON.stringify(completeEmail)));
 
     const result = await service().generateEmail({
       transcript,
@@ -179,25 +116,35 @@ describe('AiService email quality validation', () => {
       tone: 'auto',
     });
 
-    expect(result.body).toBe(transcript);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.body).toBe(completeEmail.body);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('returns a controlled error when Groq JSON is invalid', async () => {
+  it('retries invalid JSON, then returns a clear error for another weak output', async () => {
     jest
       .spyOn(global, 'fetch')
       .mockResolvedValueOnce(groqResponse('not-json'))
-      .mockResolvedValueOnce(groqResponse('still-not-json'));
+      .mockResolvedValueOnce(
+        groqResponse(
+          JSON.stringify({
+            ...completeEmail,
+            subject: '',
+            body: 'Congé vendredi.',
+          }),
+        ),
+      );
 
     await expect(
       service().generateEmail({ transcript, language: 'fr', tone: 'auto' }),
-    ).rejects.toMatchObject({ code: 'AI_INVALID_RESPONSE' });
+    ).rejects.toMatchObject({
+      message: 'La génération IA a échoué. Réessayez.',
+    });
   });
 
   it('never falls back to raw transcript when Groq is not configured', async () => {
     await expect(
       service('').generateEmail({ transcript, language: 'fr', tone: 'auto' }),
-    ).rejects.toBeInstanceOf(HttpException);
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('expands the existing email without requesting a new email', async () => {

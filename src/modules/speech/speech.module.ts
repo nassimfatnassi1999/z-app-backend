@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
 import { SpeechController } from './speech.controller';
 import { SpeechService } from './speech.service';
-import { SPEECH_TO_TEXT_PROVIDER } from './speech.types';
+import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 
 @Module({
   controllers: [SpeechController],
-  providers: [SpeechService, { provide: SPEECH_TO_TEXT_PROVIDER, useExisting: SpeechService }],
+  providers: [SpeechService, IdempotencyService],
+  exports: [SpeechService],
 })
 export class SpeechModule {}

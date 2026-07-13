@@ -1,6 +1,4 @@
-export type SupportedSpeechLanguage = 'fr' | 'en' | 'ar' | 'de' | 'es' | 'it' | 'pt' | 'nl' | 'tr';
-
-export type SpeechLanguageMode = 'auto' | SupportedSpeechLanguage;
+export type SupportedSpeechLanguage = 'fr' | 'en' | 'de' | 'es' | 'it' | 'pt' | 'nl' | 'tr';
 
 export type NormalizedSpeechLanguage = SupportedSpeechLanguage | 'unknown';
 
@@ -8,7 +6,6 @@ export const languageMap: Record<string, SupportedSpeechLanguage | undefined> = 
   auto: undefined,
   fr: 'fr',
   en: 'en',
-  ar: 'ar',
   de: 'de',
   es: 'es',
   it: 'it',
@@ -37,13 +34,7 @@ export function isSupportedLanguageInput(language?: string | null): boolean {
 }
 
 export function normalizeLanguageCode(language?: string | null): NormalizedSpeechLanguage {
-  const normalized = language?.trim().toLowerCase().replace('_', '-') ?? '';
+  const normalized = language?.trim().toLowerCase() ?? '';
   const base = normalized.split('-')[0] as SupportedSpeechLanguage;
   return supportedLanguageCodes.has(base) ? base : 'unknown';
-}
-
-export function mapSpeechLanguageForProvider(
-  language: SpeechLanguageMode,
-): SupportedSpeechLanguage | undefined {
-  return language === 'auto' ? undefined : languageMap[language];
 }
