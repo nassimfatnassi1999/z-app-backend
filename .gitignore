@@ -13,6 +13,8 @@ build/
 .env.local
 .env.*.local
 deploy/.runtime.env
+deploy/.postgres-admin-role
+deploy/.backend.runtime.env
 
 # IDE
 .vscode/

@@ -1,151 +1,317 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="${Z_PROD_ENV_FILE:-$SCRIPT_DIR/.env}"
-if [[ ! -f "$ENV_FILE" && -f "$SCRIPT_DIR/.env.prod" ]]; then
-  ENV_FILE="$SCRIPT_DIR/.env.prod"
-  echo "⚠ Using legacy deploy/.env.prod; rename it to deploy/.env when convenient."
-fi
+[[ -f "$ENV_FILE" || ! -f "$SCRIPT_DIR/.env.prod" ]] || ENV_FILE="$SCRIPT_DIR/.env.prod"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.prod.yml"
-RUNTIME_ENV_FILE="$SCRIPT_DIR/.runtime.env"
+BACKEND_ENV_FILE="$SCRIPT_DIR/.backend.runtime.env"
+POSTGRES_SERVICE="${POSTGRES_SERVICE:-z_postgres}"
+BACKEND_SERVICE="${BACKEND_SERVICE:-z_backend}"
+MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
+DB_WAIT_TIMEOUT_SECONDS="${DB_WAIT_TIMEOUT_SECONDS:-120}"
+BACKEND_WAIT_TIMEOUT_SECONDS="${BACKEND_WAIT_TIMEOUT_SECONDS:-180}"
+ACTION="${1:-deploy}"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "❌ Missing deploy/.env." >&2
-  echo "Create it with real production values before deploying:" >&2
-  echo "  cp deploy/.env.prod.example deploy/.env" >&2
-  exit 1
-fi
+log() { printf '[deploy] %s\n' "$*"; }
+fail() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
+on_error() { local code=$?; printf '[deploy] ERROR: action %s failed at line %s (exit %s).\n' "$ACTION" "$1" "$code" >&2; exit "$code"; }
+trap 'on_error $LINENO' ERR
 
-"$SCRIPT_DIR/../scripts/validate-env.sh" "$ENV_FILE"
-
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Docker is not installed or not available in PATH."
-  exit 1
-fi
-
-if ! docker compose version >/dev/null 2>&1; then
-  echo "Docker Compose plugin is not installed or not available."
-  exit 1
-fi
+[[ -f "$ENV_FILE" ]] || fail "production environment file not found (expected deploy/.env)"
 
 env_value() {
   local name="$1" line value
   line="$(grep -E "^${name}=" "$ENV_FILE" | tail -n 1 || true)"
   value="${line#*=}"
-  value="${value%\"}"
-  value="${value#\"}"
-  value="${value%\'}"
-  value="${value#\'}"
+  value="${value%\"}"; value="${value#\"}"
+  value="${value%\'}"; value="${value#\'}"
   printf '%s' "$value"
 }
 
-url_encode() {
-  local raw="$1" encoded="" char hex i
-  LC_ALL=C
-  for ((i = 0; i < ${#raw}; i++)); do
-    char="${raw:i:1}"
-    case "$char" in
-      [a-zA-Z0-9.~_-]) encoded+="$char" ;;
-      *) printf -v hex '%%%02X' "'$char"; encoded+="$hex" ;;
-    esac
-  done
-  printf '%s' "$encoded"
-}
+DB_NAME="$(env_value POSTGRES_DB)"
+LEGACY_USER="$(env_value POSTGRES_USER)"
+LEGACY_PASSWORD="$(env_value POSTGRES_PASSWORD)"
+ADMIN_USER="$(env_value POSTGRES_ADMIN_USER)"; ADMIN_USER="${ADMIN_USER:-$LEGACY_USER}"
+ADMIN_PASSWORD="$(env_value POSTGRES_ADMIN_PASSWORD)"; ADMIN_PASSWORD="${ADMIN_PASSWORD:-$LEGACY_PASSWORD}"
+APP_USER="$(env_value POSTGRES_APP_USER)"; APP_USER="${APP_USER:-$LEGACY_USER}"
+APP_PASSWORD="$(env_value POSTGRES_APP_PASSWORD)"; APP_PASSWORD="${APP_PASSWORD:-$LEGACY_PASSWORD}"
+DATABASE_URL="$(env_value DATABASE_URL)"
 
-default_backend_database_url() {
-  local user password database
-  user="$(url_encode "$(env_value POSTGRES_USER)")"
-  password="$(url_encode "$(env_value POSTGRES_PASSWORD)")"
-  database="$(url_encode "$(env_value POSTGRES_DB)")"
-  printf 'postgresql://%s:%s@z_postgres:5432/%s' "$user" "$password" "$database"
+require_tools() {
+  command -v docker >/dev/null 2>&1 || fail 'docker is not installed or not in PATH'
+  docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is not available'
 }
 
 compose() {
-  local env_args=(--env-file "$ENV_FILE")
-  local backend_database_url
-  if [[ -f "$RUNTIME_ENV_FILE" ]]; then
-    env_args+=(--env-file "$RUNTIME_ENV_FILE")
-    BACKEND_ENV_FILE="$ENV_FILE" docker compose "${env_args[@]}" -f "$COMPOSE_FILE" "$@"
-  else
-    backend_database_url="$(default_backend_database_url)"
-    BACKEND_ENV_FILE="$ENV_FILE" BACKEND_DATABASE_URL="$backend_database_url" docker compose "${env_args[@]}" -f "$COMPOSE_FILE" "$@"
-  fi
+  POSTGRES_ADMIN_USER="$ADMIN_USER" POSTGRES_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+  BACKEND_ENV_FILE="$BACKEND_ENV_FILE" BACKEND_DATABASE_URL="$DATABASE_URL" \
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
-echo "Stopping the previous deployment..."
-compose down --remove-orphans
+url_decode() {
+  local input="$1" output='' char hex decoded i
+  LC_ALL=C
+  for ((i=0; i<${#input}; i++)); do
+    char="${input:i:1}"
+    if [[ "$char" == '%' ]]; then
+      (( i + 2 < ${#input} )) || return 1
+      hex="${input:i+1:2}"
+      [[ "$hex" =~ ^[0-9A-Fa-f]{2}$ ]] || return 1
+      [[ "$hex" != '00' ]] || return 1
+      printf -v decoded '%b' "\\x$hex"
+      output+="$decoded"
+      ((i+=2))
+    else
+      output+="$char"
+    fi
+  done
+  printf '%s' "$output"
+}
 
-echo "Building production images without cache..."
-compose build --no-cache
+url_encode() {
+  local input="$1" output='' char hex i
+  LC_ALL=C
+  for ((i=0; i<${#input}; i++)); do
+    char="${input:i:1}"
+    case "$char" in
+      [a-zA-Z0-9.~_-]) output+="$char" ;;
+      *) printf -v hex '%%%02X' "'$char"; output+="$hex" ;;
+    esac
+  done
+  printf '%s' "$output"
+}
 
-echo "Starting PostgreSQL..."
-compose up -d --force-recreate z_postgres
+prepare_database_url() {
+  # Support the literal ${POSTGRES_*} form used by older env files without
+  # sourcing/evaluating their contents. Substituted components are URL-encoded.
+  DATABASE_URL="${DATABASE_URL//\$\{POSTGRES_USER\}/$(url_encode "$LEGACY_USER")}"
+  DATABASE_URL="${DATABASE_URL//\$\{POSTGRES_PASSWORD\}/$(url_encode "$LEGACY_PASSWORD")}"
+  DATABASE_URL="${DATABASE_URL//\$\{POSTGRES_APP_USER\}/$(url_encode "$APP_USER")}"
+  DATABASE_URL="${DATABASE_URL//\$\{POSTGRES_APP_PASSWORD\}/$(url_encode "$APP_PASSWORD")}"
+  DATABASE_URL="${DATABASE_URL//\$\{POSTGRES_DB\}/$(url_encode "$DB_NAME")}"
+  # Prisma already defaults to public; make it explicit for all runtime calls.
+  [[ "$DATABASE_URL" == *'?'* ]] || DATABASE_URL="${DATABASE_URL}?schema=public"
+}
 
-echo "Waiting for PostgreSQL healthcheck..."
-for attempt in $(seq 1 24); do
-  postgres_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' z_postgres 2>/dev/null || true)"
-  [[ "$postgres_health" == "healthy" ]] && break
-  if [[ "$attempt" == "24" ]]; then
-    echo "❌ PostgreSQL did not become healthy before timeout." >&2
-    compose logs --tail=100 z_postgres >&2
-    exit 1
+prepare_backend_env() {
+  # Keep all application configuration while ensuring no PostgreSQL role
+  # password (especially the administrator password) reaches NestJS.
+  local temporary_file="${BACKEND_ENV_FILE}.tmp"
+  umask 077
+  awk '!/^(POSTGRES_|DATABASE_URL=)/' "$ENV_FILE" > "$temporary_file"
+  mv "$temporary_file" "$BACKEND_ENV_FILE"
+}
+
+validate_database_url() {
+  local encoded_user encoded_password host port encoded_db query decoded_user decoded_password decoded_db
+  if [[ "$DATABASE_URL" =~ ^postgres(ql)?://([^:/?#]+):([^@/?#]+)@([^:/?#]+):([0-9]+)/([^/?#]+)(\?(.*))?$ ]]; then
+    encoded_user="${BASH_REMATCH[2]}"; encoded_password="${BASH_REMATCH[3]}"
+    host="${BASH_REMATCH[4]}"; port="${BASH_REMATCH[5]}"
+    encoded_db="${BASH_REMATCH[6]}"; query="${BASH_REMATCH[8]}"
+  else
+    fail 'DATABASE_URL must be a PostgreSQL URL with user, password, host, port, database, and query string'
   fi
-  sleep 5
-done
+  decoded_user="$(url_decode "$encoded_user")" || fail 'DATABASE_URL contains invalid user percent-encoding'
+  decoded_password="$(url_decode "$encoded_password")" || fail 'DATABASE_URL contains invalid password percent-encoding'
+  decoded_db="$(url_decode "$encoded_db")" || fail 'DATABASE_URL contains invalid database percent-encoding'
+  [[ -n "$decoded_password" ]] || fail 'DATABASE_URL password is empty'
+  [[ "$decoded_user" == "$APP_USER" ]] || fail 'DATABASE_URL user does not match POSTGRES_APP_USER/POSTGRES_USER'
+  [[ "$decoded_password" == "$APP_PASSWORD" ]] || fail 'DATABASE_URL password does not match POSTGRES_APP_PASSWORD/POSTGRES_PASSWORD'
+  [[ "$host" == "$POSTGRES_SERVICE" ]] || fail "DATABASE_URL host must be '$POSTGRES_SERVICE'"
+  [[ "$port" == '5432' ]] || fail 'DATABASE_URL container port must be 5432'
+  [[ "$decoded_db" == "$DB_NAME" ]] || fail 'DATABASE_URL database does not match POSTGRES_DB'
+  [[ "&$query&" == *'&schema=public&'* ]] || fail 'DATABASE_URL must contain schema=public'
+  log "Validated DATABASE_URL: postgresql://${encoded_user}:***@${host}:${port}/${encoded_db}?schema=public"
+}
 
-"$SCRIPT_DIR/reconcile-postgres.sh" "$ENV_FILE"
+validate_env() {
+  "$ROOT_DIR/scripts/validate-env.sh" "$ENV_FILE"
+  [[ -n "$ADMIN_USER" && -n "$ADMIN_PASSWORD" ]] || fail 'PostgreSQL administrator credentials are missing'
+  [[ -n "$APP_USER" && -n "$APP_PASSWORD" ]] || fail 'PostgreSQL application credentials are missing'
+  [[ "$ADMIN_USER" != "$APP_USER" || "$ADMIN_PASSWORD" == "$APP_PASSWORD" ]] \
+    || fail 'the same PostgreSQL role cannot have two different configured passwords'
+  validate_database_url
+  require_tools
+  compose config --quiet
+  log 'Validated Docker Compose configuration.'
+}
 
-echo "Starting freshly-created backend container..."
-compose up -d --force-recreate z_backend
+build_backend() {
+  require_tools
+  # Stop an old backend before repairing/migrating, but preserve PostgreSQL and its volume.
+  compose stop "$BACKEND_SERVICE" >/dev/null 2>&1 || true
+  log 'Building the production backend image...'
+  compose build "$BACKEND_SERVICE"
+}
 
-echo "Waiting for the backend healthcheck..."
-for attempt in $(seq 1 36); do
-  state="$(docker inspect --format '{{.State.Status}}' z_backend 2>/dev/null || true)"
-  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' z_backend 2>/dev/null || true)"
-  if [[ "$state" == "running" && "$health" == "healthy" ]]; then
-    break
+start_postgres() {
+  require_tools
+  local previous_admin=''
+  previous_admin="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_SERVICE" 2>/dev/null \
+    | sed -n 's/^POSTGRES_USER=//p' | head -n1 || true)"
+  if [[ -n "$previous_admin" && "$previous_admin" != *$'\n'* ]]; then
+    printf '%s\n' "$previous_admin" > "$SCRIPT_DIR/.postgres-admin-role"
+    chmod 600 "$SCRIPT_DIR/.postgres-admin-role"
   fi
-  if [[ "$state" == "exited" || "$state" == "dead" || "$state" == "restarting" ]]; then
-    echo "❌ Backend failed while starting (state: ${state})." >&2
-    compose logs --tail=100 z_backend >&2
-    exit 1
+  log 'Starting PostgreSQL without removing or recreating its data volume...'
+  compose up -d --force-recreate "$POSTGRES_SERVICE"
+}
+
+wait_postgres() {
+  require_tools
+  local deadline=$((SECONDS + DB_WAIT_TIMEOUT_SECONDS)) health
+  log 'Waiting for the PostgreSQL healthcheck...'
+  while (( SECONDS < deadline )); do
+    health="$(compose ps --format json "$POSTGRES_SERVICE" 2>/dev/null | grep -o '"Health":"[^"]*"' | head -n1 || true)"
+    [[ "$health" == '"Health":"healthy"' ]] && { log 'PostgreSQL is healthy.'; return 0; }
+    sleep 2
+  done
+  compose logs --tail=100 "$POSTGRES_SERVICE" >&2 || true
+  fail "PostgreSQL did not become healthy after ${DB_WAIT_TIMEOUT_SECONDS}s"
+}
+
+find_database_admin_role() {
+  local hint='' container_hint='' candidate is_super
+  [[ ! -f "$SCRIPT_DIR/.postgres-admin-role" ]] || hint="$(head -n1 "$SCRIPT_DIR/.postgres-admin-role")"
+  container_hint="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_SERVICE" 2>/dev/null \
+    | sed -n 's/^POSTGRES_USER=//p' | head -n1 || true)"
+  for candidate in "$ADMIN_USER" "$hint" "$container_hint" "$LEGACY_USER" postgres; do
+    [[ -n "$candidate" ]] || continue
+    is_super="$(compose exec -T -u postgres "$POSTGRES_SERVICE" psql -X -U "$candidate" -d postgres \
+      -tAc 'SELECT rolsuper FROM pg_roles WHERE rolname = current_user' 2>/dev/null || true)"
+    if [[ "$is_super" == 't' ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+verify_database() {
+  require_tools
+  local db_admin_role
+  db_admin_role="$(find_database_admin_role)" \
+    || fail 'no known PostgreSQL superuser can verify the existing volume'
+  log 'Verifying the administrator connection and target database...'
+  compose exec -T -u postgres "$POSTGRES_SERVICE" \
+    psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role" -d postgres -v db_name="$DB_NAME" -tAc \
+    "SELECT 1 FROM pg_database WHERE datname = :'db_name'" | grep -qx '1' \
+    || fail "administrator cannot verify database '$DB_NAME'"
+}
+
+repair_database_permissions() {
+  COMPOSE_FILE="$COMPOSE_FILE" POSTGRES_SERVICE="$POSTGRES_SERVICE" \
+    ADMIN_ROLE_HINT_FILE="$SCRIPT_DIR/.postgres-admin-role" \
+    DB_WAIT_TIMEOUT_SECONDS="$DB_WAIT_TIMEOUT_SECONDS" BACKEND_DATABASE_URL="$DATABASE_URL" \
+    "$ROOT_DIR/scripts/fix-postgres-permissions.sh" "$ENV_FILE"
+}
+
+run_migrations() {
+  require_tools
+  log 'Running Prisma migrations once (restart disabled)...'
+  if ! compose run --rm --no-deps "$MIGRATE_SERVICE"; then
+    log 'Prisma migration failed; the backend will remain stopped.' >&2
+    return 1
   fi
-  if [[ "$attempt" == "36" ]]; then
-    echo "❌ Backend did not become healthy before timeout." >&2
-    compose ps >&2
-    compose logs --tail=100 z_backend >&2
-    exit 1
+  log 'Prisma migrations completed successfully.'
+}
+
+start_backend() {
+  require_tools
+  log 'Starting the backend after successful migrations...'
+  compose up -d --force-recreate --no-deps "$BACKEND_SERVICE"
+}
+
+wait_backend() {
+  require_tools
+  local deadline=$((SECONDS + BACKEND_WAIT_TIMEOUT_SECONDS)) state health
+  log 'Waiting for the backend healthcheck...'
+  while (( SECONDS < deadline )); do
+    state="$(compose ps --format json "$BACKEND_SERVICE" 2>/dev/null | grep -o '"State":"[^"]*"' | head -n1 || true)"
+    health="$(compose ps --format json "$BACKEND_SERVICE" 2>/dev/null | grep -o '"Health":"[^"]*"' | head -n1 || true)"
+    [[ "$state" == '"State":"running"' && "$health" == '"Health":"healthy"' ]] && { log 'Backend is healthy.'; return 0; }
+    [[ "$state" == '"State":"exited"' || "$state" == '"State":"dead"' || "$state" == '"State":"restarting"' ]] && break
+    sleep 3
+  done
+  compose ps >&2 || true
+  compose logs --tail=120 "$BACKEND_SERVICE" >&2 || true
+  fail "backend did not become healthy after ${BACKEND_WAIT_TIMEOUT_SECONDS}s"
+}
+
+show_status() {
+  require_tools
+  compose ps
+  compose logs --tail=30 "$BACKEND_SERVICE"
+}
+
+diagnose() {
+  require_tools
+  local db_admin_role
+  validate_database_url
+  log 'Container and health status:'
+  compose ps "$POSTGRES_SERVICE" || true
+  db_admin_role="$(find_database_admin_role)" \
+    || fail 'no known PostgreSQL superuser can run diagnostics'
+  if ! compose exec -T -u postgres -e Z_APP_USER="$APP_USER" "$POSTGRES_SERVICE" \
+    psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role" -d "$DB_NAME" <<'SQL'
+\getenv app_user Z_APP_USER
+SELECT current_user AS connected_user, current_database() AS active_database;
+SELECT datname AS database, pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database();
+SELECT schema_name, schema_owner FROM information_schema.schemata WHERE schema_name = 'public';
+SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = '_prisma_migrations';
+SELECT rolname, rolsuper, rolcanlogin FROM pg_roles WHERE rolname IN (current_user, :'app_user') ORDER BY rolname;
+SELECT pg_get_userbyid(c.relowner) AS owner, count(*) AS table_count
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind IN ('r','p') GROUP BY c.relowner ORDER BY owner;
+SELECT schemaname, sequencename, sequenceowner FROM pg_sequences WHERE schemaname = 'public' ORDER BY sequencename;
+SELECT CASE WHEN to_regrole(:'app_user') IS NULL THEN false
+            ELSE has_database_privilege(:'app_user', current_database(), 'CONNECT,CREATE,TEMP') END
+         AS app_database_privileges,
+       CASE WHEN to_regrole(:'app_user') IS NULL THEN false
+            ELSE has_schema_privilege(:'app_user', 'public', 'USAGE,CREATE') END
+         AS app_schema_privileges,
+       CASE WHEN to_regrole(:'app_user') IS NULL THEN false
+            ELSE COALESCE((SELECT bool_and(has_table_privilege(:'app_user', format('%I.%I', schemaname, tablename), 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))
+                           FROM pg_tables WHERE schemaname = 'public'), true) END
+         AS app_all_table_privileges;
+SQL
+  then
+    fail 'database diagnostics could not connect with the configured administrator'
   fi
-  sleep 5
-done
+  log 'Prisma migration status:'
+  compose run --rm --no-deps "$MIGRATE_SERVICE" npx prisma migrate status || true
+}
 
-echo
-echo "Running containers:"
-compose ps
+deploy_all() {
+  validate_env
+  build_backend
+  start_postgres
+  wait_postgres
+  verify_database
+  repair_database_permissions
+  run_migrations
+  start_backend
+  wait_backend
+  show_status
+}
 
-echo
-echo "Recent backend logs:"
-compose logs --tail=100 z_backend
+prepare_database_url
+prepare_backend_env
 
-if ! compose exec -T z_backend npx prisma migrate status >/dev/null; then
-  echo "❌ Prisma migration status failed." >&2
-  exit 1
-fi
-
-docker image prune -f >/dev/null
-
-BACKEND_HOST_PORT="$(grep -E '^BACKEND_HOST_PORT=' "$ENV_FILE" | tail -n 1 | cut -d= -f2-)"
-BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-3002}"
-VPS_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-if [[ -z "$VPS_IP" ]]; then
-  VPS_IP="<VPS_IP>"
-fi
-
-echo
-echo "Z backend URL: http://${VPS_IP}:${BACKEND_HOST_PORT}"
-echo "Local health check: curl -f http://localhost:${BACKEND_HOST_PORT}/api/v1/health"
-echo "Flutter API_BASE_URL=http://${VPS_IP}:${BACKEND_HOST_PORT}"
-echo "✓ Deployment completed and backend is healthy."
+case "$ACTION" in
+  validate-env) validate_env ;;
+  build-backend) build_backend ;;
+  start-postgres) start_postgres ;;
+  wait-postgres) wait_postgres ;;
+  verify-database) verify_database ;;
+  repair-database-permissions) repair_database_permissions ;;
+  run-migrations) run_migrations ;;
+  start-backend) start_backend ;;
+  wait-backend) wait_backend ;;
+  show-status) show_status ;;
+  diagnose) diagnose ;;
+  deploy) deploy_all ;;
+  *) fail "unknown action '$ACTION'" ;;
+esac

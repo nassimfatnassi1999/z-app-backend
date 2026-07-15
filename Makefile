@@ -1,11 +1,16 @@
 COMPOSE=docker compose
 DB_SERVICE=postgres
+PROD_ENV?=$(CURDIR)/.env
 -include .env
 export DATABASE_URL=postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(POSTGRES_DB)
 POSTGRES_USER?=postgres
 POSTGRES_DB?=zdb
 
-.PHONY: dev stop reset-db logs wait-db prod-deploy prod-stop prod-undeploy prod-monitor prod-menu doctor validate-env
+.PHONY: dev stop reset-db logs wait-db validate-local-env doctor \
+	prod-deploy prod-stop prod-undeploy prod-monitor prod-menu \
+	validate-env build-backend start-postgres wait-postgres verify-database \
+	repair-database-permissions run-migrations start-backend wait-backend show-status \
+	prod-db-diagnose prod-db-repair
 
 dev:
 	$(COMPOSE) up -d $(DB_SERVICE)
@@ -34,23 +39,72 @@ logs:
 	$(COMPOSE) logs -f $(DB_SERVICE)
 
 prod-deploy:
-	cd deploy && ./deploy.sh
-
-prod-stop:
-	cd deploy && ./stop.sh
-
-prod-undeploy:
-	cd deploy && ./undeploy.sh
-
-prod-monitor:
-	cd deploy && ./monitor.sh
-
-prod-menu:
-	cd deploy && ./manage.sh
+	$(MAKE) validate-env
+	$(MAKE) build-backend
+	$(MAKE) start-postgres
+	$(MAKE) wait-postgres
+	$(MAKE) verify-database
+	$(MAKE) repair-database-permissions
+	$(MAKE) run-migrations
+	$(MAKE) start-backend
+	$(MAKE) wait-backend
+	$(MAKE) show-status
 
 validate-env:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh validate-env
+
+build-backend:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh build-backend
+
+start-postgres:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh start-postgres
+
+wait-postgres:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh wait-postgres
+
+verify-database:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh verify-database
+
+repair-database-permissions:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh repair-database-permissions
+
+run-migrations:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh run-migrations
+
+start-backend:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh start-backend
+
+wait-backend:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh wait-backend
+
+show-status:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh show-status
+
+prod-db-diagnose:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh diagnose
+
+prod-db-repair:
+	$(MAKE) validate-env
+	$(MAKE) start-postgres
+	$(MAKE) wait-postgres
+	$(MAKE) verify-database
+	$(MAKE) repair-database-permissions
+
+prod-stop:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./stop.sh
+
+prod-undeploy:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./undeploy.sh
+
+prod-monitor:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./monitor.sh
+
+prod-menu:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./manage.sh
+
+validate-local-env:
 	./scripts/validate-env.sh .env
 	./scripts/check-env-example.sh .env .env.example
 
 doctor:
-	cd deploy && ./doctor.sh
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./doctor.sh

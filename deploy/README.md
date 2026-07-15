@@ -35,11 +35,12 @@ cp deploy/.env.prod.example deploy/.env
 make prod-deploy
 ```
 
-Every deployment validates the environment before Docker is stopped, rebuilds
-without cache, force-recreates the containers, waits for a healthy NestJS
-process and verifies Prisma. If an old PostgreSQL volume still uses a previous
-database role, deployment aligns the backend runtime automatically without
-deleting data. Run `make doctor` for a complete diagnostic. See
+Every deployment validates the environment, builds the image, starts only
+PostgreSQL, repairs ownership and privileges, runs Prisma migrations once, and
+only then starts the backend. If an old PostgreSQL volume still uses a previous
+database role, deployment reuses that administrator role to reconcile the
+persistent objects without deleting data. Run `make prod-db-diagnose` for the
+database report or `make doctor` for the broader diagnostic. See
 [`Deployment.md`](Deployment.md) for updates and rollback.
 
 Direct script usage also works:
@@ -56,6 +57,8 @@ make prod-stop      # stop containers, preserve database data
 make prod-monitor   # show status and recent logs
 make prod-menu      # open interactive manager
 make prod-undeploy  # remove containers, optionally delete volume
+make prod-db-diagnose # owners, privileges, roles, and Prisma state
+make prod-db-repair   # repair PostgreSQL only; preserve all data
 ```
 
 Useful direct commands:
@@ -68,13 +71,14 @@ Useful direct commands:
 
 ## Migrations
 
-Migrations run automatically when `z_backend` starts:
+Migrations run in the one-shot `migrate` service with `restart: "no"`:
 
 ```bash
-npx prisma migrate deploy && node dist/main.js
+docker compose run --rm --no-deps migrate npx prisma migrate deploy
 ```
 
-You can also run migrations from the interactive menu.
+The backend image starts only `node dist/main.js`; a failed migration stops the
+deployment before the backend is created or restarted.
 
 ## Firewall
 
