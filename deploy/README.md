@@ -59,6 +59,8 @@ make prod-menu      # open interactive manager
 make prod-undeploy  # remove containers, optionally delete volume
 make prod-db-diagnose # owners, privileges, roles, and Prisma state
 make prod-db-repair   # repair PostgreSQL only; preserve all data
+make prod-backend-diagnose # Docker health history, internal probe, backend logs
+make prod-healthcheck      # test health from the container and the VPS host
 ```
 
 Useful direct commands:
@@ -111,6 +113,15 @@ For a real release, HTTPS is recommended later via Nginx, Caddy, or Cloudflare. 
 ```bash
 curl -f http://localhost:3002/api/v1/health
 ```
+
+Docker runs the same readiness check from inside the container with Node 20:
+
+```bash
+node scripts/docker-healthcheck.js
+```
+
+Additional endpoints are available at `/api/v1/health/live` (NestJS process)
+and `/api/v1/health/ready` (NestJS plus PostgreSQL).
 
 Expected response:
 

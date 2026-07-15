@@ -11,7 +11,7 @@ POSTGRES_SERVICE="${POSTGRES_SERVICE:-z_postgres}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-z_backend}"
 MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
 DB_WAIT_TIMEOUT_SECONDS="${DB_WAIT_TIMEOUT_SECONDS:-120}"
-BACKEND_WAIT_TIMEOUT_SECONDS="${BACKEND_WAIT_TIMEOUT_SECONDS:-90}"
+BACKEND_WAIT_TIMEOUT_SECONDS="${BACKEND_WAIT_TIMEOUT_SECONDS:-160}"
 ACTION="${1:-deploy}"
 
 log() { printf '[deploy] %s\n' "$*"; }
@@ -230,22 +230,67 @@ start_backend() {
   compose up -d --force-recreate --no-deps "$BACKEND_SERVICE"
 }
 
+run_internal_healthcheck() {
+  local container_id="$1"
+  if docker exec "$container_id" test -f /app/scripts/docker-healthcheck.js; then
+    docker exec "$container_id" node scripts/docker-healthcheck.js
+    return
+  fi
+  log 'The running image predates docker-healthcheck.js; using the equivalent inline Node probe.' >&2
+  docker exec "$container_id" node -e '
+    const port = process.env.PORT || "3000";
+    fetch(`http://127.0.0.1:${port}/api/v1/health`)
+      .then(async response => {
+        const body = await response.text();
+        console.log(`Healthcheck HTTP ${response.status} ${body.slice(0, 1000)}`);
+        process.exit(response.ok ? 0 : 1);
+      })
+      .catch(error => { console.error(error.message); process.exit(1); });
+  '
+}
+
+backend_health_diagnostics() {
+  local container_id="$1"
+  log 'Docker health state and recent probe results:' >&2
+  if ! docker inspect "$container_id" --format '{{json .State.Health}}' >&2; then
+    log 'Unable to inspect Docker health state.' >&2
+  fi
+  if ! docker inspect "$container_id" \
+    --format '{{range .State.Health.Log}}{{println .Start "exit=" .ExitCode}}{{println .Output}}{{end}}' >&2; then
+    log 'Unable to read Docker healthcheck history.' >&2
+  fi
+  log 'Direct health request from inside the backend container:' >&2
+  if ! run_internal_healthcheck "$container_id" >&2; then
+    log 'The internal HTTP health request failed.' >&2
+  fi
+  log 'Recent backend logs:' >&2
+  if ! compose logs --tail=150 "$BACKEND_SERVICE" >&2; then
+    log 'Unable to read backend logs.' >&2
+  fi
+}
+
 wait_backend() {
   require_tools
   local deadline=$((SECONDS + BACKEND_WAIT_TIMEOUT_SECONDS)) container_id='' state='' health='' last_report=0
   log 'Waiting for the backend healthcheck...'
   while (( SECONDS < deadline )); do
-    container_id="$(compose ps -q "$BACKEND_SERVICE" 2>/dev/null | head -n1 || true)"
+    if ! container_id="$(compose ps -q "$BACKEND_SERVICE" 2>/dev/null | head -n1)"; then
+      container_id=''
+    fi
     if [[ -n "$container_id" ]]; then
-      state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
-      health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null || true)"
+      if ! state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null)"; then
+        state='unknown'
+      fi
+      if ! health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null)"; then
+        health='unknown'
+      fi
       if [[ "$state" == 'running' && "$health" == 'healthy' ]]; then
         log 'Backend is healthy.'
         return 0
       fi
       if [[ "$state" == 'exited' || "$state" == 'dead' || "$state" == 'restarting' || "$health" == 'unhealthy' ]]; then
         log "Backend startup failed (state=${state:-unknown}, health=${health:-unknown})." >&2
-        compose logs --tail=120 "$BACKEND_SERVICE" >&2 || true
+        backend_health_diagnostics "$container_id"
         return 1
       fi
     fi
@@ -255,8 +300,14 @@ wait_backend() {
     fi
     sleep 2
   done
-  compose ps >&2 || true
-  compose logs --tail=120 "$BACKEND_SERVICE" >&2 || true
+  if [[ -n "$container_id" ]]; then
+    backend_health_diagnostics "$container_id"
+  else
+    log 'Backend container was not created.' >&2
+    if ! compose ps >&2; then
+      log 'Unable to obtain Compose status.' >&2
+    fi
+  fi
   fail "backend did not become healthy after ${BACKEND_WAIT_TIMEOUT_SECONDS}s"
 }
 
@@ -264,6 +315,40 @@ show_status() {
   require_tools
   compose ps
   compose logs --tail=30 "$BACKEND_SERVICE"
+  log 'Production deployment completed successfully.'
+}
+
+backend_diagnose() {
+  require_tools
+  local container_id port route
+  if ! container_id="$(compose ps -q "$BACKEND_SERVICE" 2>/dev/null | head -n1)"; then
+    container_id=''
+  fi
+  [[ -n "$container_id" ]] || fail 'backend container does not exist'
+  compose ps
+  port="$(docker exec "$container_id" node -e "process.stdout.write(process.env.PORT || '3000')")"
+  route='/api/v1/health'
+  log "Backend container state: $(docker inspect --format '{{.State.Status}}' "$container_id")"
+  log "Internal port: $port"
+  log "Health route: $route"
+  backend_health_diagnostics "$container_id"
+}
+
+production_healthcheck() {
+  require_tools
+  local container_id host_port
+  if ! container_id="$(compose ps -q "$BACKEND_SERVICE" 2>/dev/null | head -n1)"; then
+    container_id=''
+  fi
+  [[ -n "$container_id" ]] || fail 'backend container does not exist'
+  log 'Testing /api/v1/health from inside the container...'
+  run_internal_healthcheck "$container_id"
+  command -v curl >/dev/null 2>&1 || fail 'curl is required for the VPS host-side health test'
+  host_port="$(env_value BACKEND_HOST_PORT)"; host_port="${host_port:-3002}"
+  log "Testing /api/v1/health from the VPS on 127.0.0.1:${host_port}..."
+  curl --fail --silent --show-error "http://127.0.0.1:${host_port}/api/v1/health"
+  printf '\n'
+  log 'Internal and VPS healthchecks succeeded.'
 }
 
 diagnose() {
@@ -331,6 +416,8 @@ case "$ACTION" in
   start-backend) start_backend ;;
   wait-backend) wait_backend ;;
   show-status) show_status ;;
+  backend-diagnose) backend_diagnose ;;
+  healthcheck) production_healthcheck ;;
   diagnose) diagnose ;;
   deploy) deploy_all ;;
   *) fail "unknown action '$ACTION'" ;;

@@ -59,11 +59,11 @@ services:
     networks:
       - z_network
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:$${PORT:-3000}/api/v1/health >/dev/null 2>&1 || exit 1"]
-      interval: 5s
+      test: ["CMD", "node", "scripts/docker-healthcheck.js"]
+      interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 10s
+      retries: 12
+      start_period: 20s
 
   migrate:
     image: ${BACKEND_IMAGE:-z-backend:production}

@@ -7,7 +7,22 @@ export class HealthController {
 
   @Get()
   async health() {
+    return this.ready();
+  }
+
+  @Get('live')
+  live() {
+    return { status: 'ok', timestamp: new Date().toISOString() };
+  }
+
+  @Get('ready')
+  async ready() {
     await this.prisma.$queryRaw`SELECT 1`;
-    return { status: 'ok', service: 'z-backend' };
+    return {
+      status: 'ok',
+      service: 'z-backend',
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+    };
   }
 }

@@ -10,7 +10,7 @@ POSTGRES_DB?=zdb
 	prod-deploy prod-stop prod-undeploy prod-monitor prod-menu \
 	validate-env build-backend start-postgres wait-postgres verify-database \
 	repair-database-permissions run-migrations start-backend wait-backend show-status \
-	prod-db-diagnose prod-db-repair
+	prod-db-diagnose prod-db-repair prod-backend-diagnose prod-healthcheck
 
 dev:
 	$(COMPOSE) up -d $(DB_SERVICE)
@@ -82,6 +82,12 @@ show-status:
 
 prod-db-diagnose:
 	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh diagnose
+
+prod-backend-diagnose:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh backend-diagnose
+
+prod-healthcheck:
+	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh healthcheck
 
 prod-db-repair:
 	$(MAKE) validate-env

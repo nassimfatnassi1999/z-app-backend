@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -8,6 +8,7 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { NextFunction, Request, Response } from 'express';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
   const port = config.get<number>('PORT', 3000);
@@ -60,6 +61,8 @@ async function bootstrap() {
   }
 
   await app.listen(port, '0.0.0.0');
+  logger.log(`Backend listening on 0.0.0.0:${port}`);
+  logger.log('Health endpoint: /api/v1/health');
 }
 
 bootstrap();
