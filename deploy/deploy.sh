@@ -11,7 +11,7 @@ POSTGRES_SERVICE="${POSTGRES_SERVICE:-z_postgres}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-z_backend}"
 MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
 DB_WAIT_TIMEOUT_SECONDS="${DB_WAIT_TIMEOUT_SECONDS:-120}"
-BACKEND_WAIT_TIMEOUT_SECONDS="${BACKEND_WAIT_TIMEOUT_SECONDS:-180}"
+BACKEND_WAIT_TIMEOUT_SECONDS="${BACKEND_WAIT_TIMEOUT_SECONDS:-90}"
 ACTION="${1:-deploy}"
 
 log() { printf '[deploy] %s\n' "$*"; }
@@ -232,14 +232,28 @@ start_backend() {
 
 wait_backend() {
   require_tools
-  local deadline=$((SECONDS + BACKEND_WAIT_TIMEOUT_SECONDS)) state health
+  local deadline=$((SECONDS + BACKEND_WAIT_TIMEOUT_SECONDS)) container_id='' state='' health='' last_report=0
   log 'Waiting for the backend healthcheck...'
   while (( SECONDS < deadline )); do
-    state="$(compose ps --format json "$BACKEND_SERVICE" 2>/dev/null | grep -o '"State":"[^"]*"' | head -n1 || true)"
-    health="$(compose ps --format json "$BACKEND_SERVICE" 2>/dev/null | grep -o '"Health":"[^"]*"' | head -n1 || true)"
-    [[ "$state" == '"State":"running"' && "$health" == '"Health":"healthy"' ]] && { log 'Backend is healthy.'; return 0; }
-    [[ "$state" == '"State":"exited"' || "$state" == '"State":"dead"' || "$state" == '"State":"restarting"' ]] && break
-    sleep 3
+    container_id="$(compose ps -q "$BACKEND_SERVICE" 2>/dev/null | head -n1 || true)"
+    if [[ -n "$container_id" ]]; then
+      state="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+      health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null || true)"
+      if [[ "$state" == 'running' && "$health" == 'healthy' ]]; then
+        log 'Backend is healthy.'
+        return 0
+      fi
+      if [[ "$state" == 'exited' || "$state" == 'dead' || "$state" == 'restarting' || "$health" == 'unhealthy' ]]; then
+        log "Backend startup failed (state=${state:-unknown}, health=${health:-unknown})." >&2
+        compose logs --tail=120 "$BACKEND_SERVICE" >&2 || true
+        return 1
+      fi
+    fi
+    if (( SECONDS - last_report >= 10 )); then
+      log "Backend startup in progress (state=${state:-creating}, health=${health:-starting})..."
+      last_report=$SECONDS
+    fi
+    sleep 2
   done
   compose ps >&2 || true
   compose logs --tail=120 "$BACKEND_SERVICE" >&2 || true
