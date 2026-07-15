@@ -35,6 +35,7 @@ LEGACY_USER="$(env_value POSTGRES_USER)"
 LEGACY_PASSWORD="$(env_value POSTGRES_PASSWORD)"
 ADMIN_USER="$(env_value POSTGRES_ADMIN_USER)"; ADMIN_USER="${ADMIN_USER:-$LEGACY_USER}"
 ADMIN_PASSWORD="$(env_value POSTGRES_ADMIN_PASSWORD)"; ADMIN_PASSWORD="${ADMIN_PASSWORD:-$LEGACY_PASSWORD}"
+LEGACY_ADMIN_USER="$(env_value POSTGRES_LEGACY_ADMIN_USER)"
 APP_USER="$(env_value POSTGRES_APP_USER)"; APP_USER="${APP_USER:-$LEGACY_USER}"
 APP_PASSWORD="$(env_value POSTGRES_APP_PASSWORD)"; APP_PASSWORD="${APP_PASSWORD:-$LEGACY_PASSWORD}"
 DATABASE_URL="$(env_value DATABASE_URL)"
@@ -177,7 +178,9 @@ find_database_admin_role() {
   [[ ! -f "$SCRIPT_DIR/.postgres-admin-role" ]] || hint="$(head -n1 "$SCRIPT_DIR/.postgres-admin-role")"
   container_hint="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$POSTGRES_SERVICE" 2>/dev/null \
     | sed -n 's/^POSTGRES_USER=//p' | head -n1 || true)"
-  for candidate in "$ADMIN_USER" "$hint" "$container_hint" "$LEGACY_USER" postgres; do
+  # z_user was the production Compose default in older releases. Keep it as a
+  # safe local-socket candidate so already-initialized volumes self-heal.
+  for candidate in "$ADMIN_USER" "$LEGACY_ADMIN_USER" "$hint" "$container_hint" "$LEGACY_USER" z_user postgres; do
     [[ -n "$candidate" ]] || continue
     is_super="$(compose exec -T -u postgres "$POSTGRES_SERVICE" psql -X -U "$candidate" -d postgres \
       -tAc 'SELECT rolsuper FROM pg_roles WHERE rolname = current_user' 2>/dev/null || true)"
@@ -193,7 +196,7 @@ verify_database() {
   require_tools
   local db_admin_role
   db_admin_role="$(find_database_admin_role)" \
-    || fail 'no known PostgreSQL superuser can verify the existing volume'
+    || fail 'no known PostgreSQL superuser can verify the existing volume; set POSTGRES_LEGACY_ADMIN_USER to its original owner role'
   log 'Verifying the administrator connection and target database...'
   compose exec -T -u postgres "$POSTGRES_SERVICE" \
     psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role" -d postgres -v db_name="$DB_NAME" -tAc \
@@ -253,7 +256,7 @@ diagnose() {
   log 'Container and health status:'
   compose ps "$POSTGRES_SERVICE" || true
   db_admin_role="$(find_database_admin_role)" \
-    || fail 'no known PostgreSQL superuser can run diagnostics'
+    || fail 'no known PostgreSQL superuser can run diagnostics; set POSTGRES_LEGACY_ADMIN_USER to its original owner role'
   if ! compose exec -T -u postgres -e Z_APP_USER="$APP_USER" "$POSTGRES_SERVICE" \
     psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role" -d "$DB_NAME" <<'SQL'
 \getenv app_user Z_APP_USER

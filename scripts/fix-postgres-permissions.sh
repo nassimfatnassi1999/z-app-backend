@@ -32,6 +32,7 @@ LEGACY_USER="$(env_value POSTGRES_USER)"
 LEGACY_PASSWORD="$(env_value POSTGRES_PASSWORD)"
 ADMIN_USER="$(env_value POSTGRES_ADMIN_USER)"; ADMIN_USER="${ADMIN_USER:-$LEGACY_USER}"
 ADMIN_PASSWORD="$(env_value POSTGRES_ADMIN_PASSWORD)"; ADMIN_PASSWORD="${ADMIN_PASSWORD:-$LEGACY_PASSWORD}"
+LEGACY_ADMIN_USER="$(env_value POSTGRES_LEGACY_ADMIN_USER)"
 APP_USER="$(env_value POSTGRES_APP_USER)"; APP_USER="${APP_USER:-$LEGACY_USER}"
 APP_PASSWORD="$(env_value POSTGRES_APP_PASSWORD)"; APP_PASSWORD="${APP_PASSWORD:-$LEGACY_PASSWORD}"
 
@@ -62,7 +63,7 @@ admin_role_hint=''
 [[ -z "$ADMIN_ROLE_HINT_FILE" || ! -f "$ADMIN_ROLE_HINT_FILE" ]] \
   || admin_role_hint="$(head -n1 "$ADMIN_ROLE_HINT_FILE")"
 db_admin_role=''
-for candidate in "$ADMIN_USER" "$admin_role_hint" "$LEGACY_USER" postgres; do
+for candidate in "$ADMIN_USER" "$LEGACY_ADMIN_USER" "$admin_role_hint" "$LEGACY_USER" z_user postgres; do
   [[ -n "$candidate" ]] || continue
   is_super="$(compose exec -T -u postgres "$POSTGRES_SERVICE" \
     psql -X -U "$candidate" -d postgres -tAc \
@@ -72,7 +73,8 @@ for candidate in "$ADMIN_USER" "$admin_role_hint" "$LEGACY_USER" postgres; do
     break
   fi
 done
-[[ -n "$db_admin_role" ]] || fail 'no known PostgreSQL superuser can connect; provide the existing administrator role'
+[[ -n "$db_admin_role" ]] \
+  || fail 'no known PostgreSQL superuser can connect; set POSTGRES_LEGACY_ADMIN_USER to the role that initialized the volume'
 admin_psql=(compose exec -T -u postgres "$POSTGRES_SERVICE" psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role")
 
 db_exists="$("${admin_psql[@]}" -d postgres -v db_name="$DB_NAME" -tAc \
