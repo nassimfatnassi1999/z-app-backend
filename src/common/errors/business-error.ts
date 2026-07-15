@@ -1,6 +1,14 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 
 export type BusinessErrorCode =
+  | 'NO_SPEECH'
+  | 'AUDIO_TOO_SHORT'
+  | 'AUDIO_INVALID'
+  | 'LOW_CONFIDENCE'
+  | 'NETWORK_ERROR'
+  | 'TIMEOUT'
+  | 'PROVIDER_UNAVAILABLE'
+  | 'AI_GENERATION_FAILED'
   | 'AUDIO_EMPTY'
   | 'AUDIO_TOO_LARGE'
   | 'AUDIO_UNSUPPORTED'

@@ -45,7 +45,14 @@ export class SpeechController {
   ) {
     const file = files.audio?.[0] ?? files.file?.[0];
     if (!file) {
-      throw new BusinessException('AUDIO_EMPTY', 'Aucun fichier audio reçu.', true);
+      throw new BusinessException('AUDIO_INVALID', 'Aucun fichier audio valide reçu.', false);
+    }
+    if ((file.size ?? file.buffer?.length ?? 0) > MAX_AUDIO_BYTES) {
+      throw new BusinessException(
+        'AUDIO_TOO_LARGE',
+        'L’enregistrement est trop volumineux.',
+        false,
+      );
     }
 
     return this.idempotency.run('speech:transcribe', idempotencyKey, () =>

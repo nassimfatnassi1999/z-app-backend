@@ -37,12 +37,14 @@ rollback.
 No special Deepgram account configuration is usually required for language
 selection. The API controls transcription language through request options:
 
-- `auto` omits `language` and uses `detect_language=true`.
+- `auto` omits `language` and uses `model=nova-3-general` with
+  `detect_language=true`.
 - `fr`, `en`, `de`, `es`, `it`, `pt`, `nl`, and `tr` force the matching
   Deepgram `language` option.
 - Requests use `smart_format=true`, `punctuate=true`, `paragraphs=true`,
-  `utterances=true`, `diarize=false`, and `DEEPGRAM_MODEL` when set, defaulting
-  to `nova-2-general`.
+  `numerals=true`, and `DEEPGRAM_MODEL` when set, defaulting to
+  `nova-3-general`. A single quality fallback uses `model=nova-3` with
+  `language=multi`; it never combines `language` and `detect_language`.
 
 The backend normalizes responses to:
 

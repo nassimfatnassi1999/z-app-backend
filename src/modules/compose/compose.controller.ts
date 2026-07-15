@@ -11,9 +11,8 @@ import {
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { IdempotencyService } from '../../common/idempotency/idempotency.service';
-import { AiOrchestratorService } from '../ai/services/ai-orchestrator.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { SpeechService } from '../speech/speech.service';
+import { VoiceComposeOrchestratorService } from './voice-compose-orchestrator.service';
 
 type UploadedAudio = { buffer: Buffer; mimetype: string; originalname: string; size: number };
 
@@ -21,8 +20,7 @@ type UploadedAudio = { buffer: Buffer; mimetype: string; originalname: string; s
 @Controller('compose')
 export class ComposeController {
   constructor(
-    private readonly speech: SpeechService,
-    private readonly ai: AiOrchestratorService,
+    private readonly orchestrator: VoiceComposeOrchestratorService,
     private readonly idempotency: IdempotencyService,
   ) {}
 
@@ -52,16 +50,7 @@ export class ComposeController {
         error: { code: 'AUDIO_EMPTY', message: 'Aucun fichier audio reçu.', retryable: true },
       });
     return this.idempotency.run('compose:audio', key, async () => {
-      const speech = await this.speech.transcribe(file, language);
-      if (speech.requiresConfirmation) return { status: 'needs_transcript_confirmation', speech };
-      return {
-        ...(await this.ai.compose({
-          transcript: speech.transcript,
-          language: speech.language,
-          tone,
-        })),
-        speech,
-      };
+      return this.orchestrator.compose(file, language, tone);
     });
   }
 }

@@ -8,8 +8,8 @@ import {
   SupportedSpeechLanguage,
   unsupportedLanguageResponse,
 } from './languageMap';
-import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
 import { BusinessException } from '../../common/errors/business-error';
+import { randomUUID } from 'crypto';
 
 type DeepgramResponse = {
   results?: {
@@ -21,6 +21,7 @@ type DeepgramResponse = {
         detected_language?: string;
       }>;
       detected_language?: string;
+      language_confidence?: number;
     }>;
   };
   metadata?: {
@@ -59,92 +60,109 @@ export class SpeechService implements SpeechProvider {
   constructor(private readonly config: ConfigService) {}
 
   async transcribe(file: any, selectedLanguage = 'auto'): Promise<TranscriptResponse> {
+    const requestId = randomUUID();
+    const startedAt = Date.now();
     const mime = this.detectMime(file.buffer, this.normalizeMime(file.mimetype, file.originalname));
     const normalizedSelection = selectedLanguage.trim().toLowerCase() || 'auto';
     const deepgramLanguage = this.deepgramLanguageFor(normalizedSelection);
-    const deepgramOptions = this.buildDeepgramOptions(deepgramLanguage);
     const audioBytes = file.size ?? file.buffer?.length ?? 0;
     this.logger.log(
-      `STT request received audioBytes=${audioBytes} mime=${mime} selectedLanguage=${normalizedSelection}`,
+      `requestId=${requestId} event=stt_started audioBytes=${audioBytes} mime=${mime} selectedLanguage=${normalizedSelection}`,
     );
 
     if (!this.acceptedMime.has(mime)) {
-      this.fail('AUDIO_UNSUPPORTED', 'unsupported_format');
+      this.fail(requestId, 'AUDIO_INVALID', 'unsupported_format');
       throw new BusinessException(
-        'AUDIO_UNSUPPORTED',
+        'AUDIO_INVALID',
         'Le format de cet enregistrement n’est pas pris en charge.',
-        true,
+        false,
       );
     }
 
     const apiKey = this.config.get<string>('DEEPGRAM_API_KEY');
     if (!apiKey || apiKey.startsWith('REPLACE_WITH')) {
-      this.fail('STT_PROVIDER_ERROR', 'provider_not_configured');
+      this.fail(requestId, 'PROVIDER_UNAVAILABLE', 'provider_not_configured');
       throw new BusinessException(
-        'STT_PROVIDER_ERROR',
+        'PROVIDER_UNAVAILABLE',
         'Impossible de contacter le service de transcription.',
         true,
         503,
       );
     }
 
-    const params = new URLSearchParams(deepgramOptions);
-
-    let response: Response;
+    const deadline = startedAt + 35_000;
+    const primaryOptions = this.buildDeepgramOptions(deepgramLanguage);
+    let normalized: TranscriptResponse;
+    let fallbackUsed = false;
     try {
-      response = await fetchWithTimeout(
-        `https://api.deepgram.com/v1/listen?${params.toString()}`,
-        {
-          method: 'POST',
-          headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
-          body: file.buffer as unknown as BodyInit,
-        },
-        { timeoutMs: 30_000, retries: 1, errorMessage: 'Deepgram transcription failed' },
+      normalized = await this.requestDeepgram(
+        apiKey,
+        mime,
+        file.buffer,
+        primaryOptions,
+        deepgramLanguage ?? null,
+        deadline,
       );
-    } catch {
-      this.fail('STT_PROVIDER_TIMEOUT', 'provider_timeout_or_network');
-      throw new BusinessException(
-        'STT_PROVIDER_TIMEOUT',
-        'Le service de transcription met trop de temps à répondre.',
-        true,
-        504,
-      );
+      if (this.needsQualityFallback(normalized)) {
+        fallbackUsed = true;
+        normalized = await this.requestDeepgram(
+          apiKey,
+          mime,
+          file.buffer,
+          this.buildFallbackOptions(normalized.language),
+          normalized.language === 'unknown' ? null : normalized.language,
+          deadline,
+        );
+      }
+    } catch (error) {
+      if (error instanceof BusinessException && error.getStatus() < 500) throw error;
+      if (Date.now() >= deadline) {
+        this.fail(requestId, 'TIMEOUT', 'global_timeout');
+        throw new BusinessException(
+          'TIMEOUT',
+          'La transcription prend trop de temps. Réessayez.',
+          true,
+          504,
+        );
+      }
+      if (!fallbackUsed) {
+        fallbackUsed = true;
+        try {
+          normalized = await this.requestDeepgram(
+            apiKey,
+            mime,
+            file.buffer,
+            primaryOptions,
+            deepgramLanguage ?? null,
+            deadline,
+          );
+        } catch (retryError) {
+          throw this.providerFailure(requestId, retryError, deadline);
+        }
+      } else {
+        throw this.providerFailure(requestId, error, deadline);
+      }
     }
 
-    if (!response.ok) {
-      await response.body?.cancel();
-      const isTimeout = response.status === 408 || response.status === 504;
-      this.fail(
-        isTimeout ? 'STT_PROVIDER_TIMEOUT' : 'STT_PROVIDER_ERROR',
-        `provider_status_${response.status}`,
-      );
-      throw new BusinessException(
-        isTimeout ? 'STT_PROVIDER_TIMEOUT' : 'STT_PROVIDER_ERROR',
-        isTimeout
-          ? 'Le service de transcription met trop de temps à répondre.'
-          : 'Impossible de contacter le service de transcription.',
-        true,
-        isTimeout ? 504 : 503,
-      );
+    if (normalized.duration > 0 && normalized.duration < 1) {
+      this.fail(requestId, 'AUDIO_TOO_SHORT', 'duration_below_one_second', normalized);
+      throw new BusinessException('AUDIO_TOO_SHORT', 'L’enregistrement est trop court.', true);
     }
-
-    const json = (await response.json()) as DeepgramResponse;
-    const normalized = this.normalizeDeepgram(json, deepgramLanguage ?? null);
     const finalLanguage =
       deepgramLanguage === undefined && normalized.confidence < 0.55
         ? 'unknown'
         : normalized.language;
     if (normalized.transcript.length < 3) {
-      this.fail('AUDIO_TOO_SILENT', 'transcript_too_short', normalized);
+      this.fail(requestId, 'NO_SPEECH', 'transcript_too_short', normalized);
       throw new BusinessException(
-        'AUDIO_TOO_SILENT',
+        'NO_SPEECH',
         'Nous n’avons pas entendu suffisamment de voix pour créer votre email.',
         true,
       );
     }
     if (normalized.confidence < 0.35) {
-      this.fail('STT_LOW_CONFIDENCE', 'confidence_below_threshold', normalized);
-      throw new BusinessException('STT_LOW_CONFIDENCE', 'La qualité audio est insuffisante.', true);
+      this.fail(requestId, 'LOW_CONFIDENCE', 'confidence_below_threshold', normalized);
+      throw new BusinessException('LOW_CONFIDENCE', 'La qualité audio est insuffisante.', true);
     }
     const result = {
       ...normalized,
@@ -153,7 +171,7 @@ export class SpeechService implements SpeechProvider {
       uncertainEntities: [],
     };
     this.logger.log(
-      `STT completed durationSeconds=${normalized.duration} detectedLanguage=${normalized.language} averageConfidence=${normalized.confidence.toFixed(3)} transcriptChars=${normalized.transcript.length}`,
+      `requestId=${requestId} event=stt_completed durationMs=${Date.now() - startedAt} audioBytes=${audioBytes} mime=${mime} audioDurationSeconds=${normalized.duration} detectedLanguage=${normalized.language} averageConfidence=${normalized.confidence.toFixed(3)} transcriptChars=${normalized.transcript.length} fallbackUsed=${fallbackUsed}`,
     );
     return result;
   }
@@ -182,14 +200,13 @@ export class SpeechService implements SpeechProvider {
   }
 
   private buildDeepgramOptions(language?: SupportedSpeechLanguage): DeepgramOptions {
-    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-2-general';
+    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-3-general';
     const options: DeepgramOptions = {
       model,
       smart_format: 'true',
       punctuate: 'true',
       paragraphs: 'true',
-      utterances: 'true',
-      diarize: 'false',
+      numerals: 'true',
     };
 
     if (language) {
@@ -197,6 +214,84 @@ export class SpeechService implements SpeechProvider {
     }
 
     return { ...options, detect_language: 'true' };
+  }
+
+  private buildFallbackOptions(language: NormalizedSpeechLanguage): DeepgramOptions {
+    const common: DeepgramOptions = {
+      smart_format: 'true',
+      punctuate: 'true',
+      paragraphs: 'true',
+      numerals: 'true',
+    };
+    return language === 'unknown'
+      ? { ...common, model: 'nova-3', language: 'multi' }
+      : { ...common, model: 'nova-3-general', language };
+  }
+
+  private needsQualityFallback(result: TranscriptResponse) {
+    return result.transcript.length < 3 || result.confidence < 0.35;
+  }
+
+  private async requestDeepgram(
+    apiKey: string,
+    mime: string,
+    buffer: Buffer,
+    options: DeepgramOptions,
+    selectedLanguage: SupportedSpeechLanguage | null,
+    deadline: number,
+  ) {
+    const remainingMs = Math.min(20_000, deadline - Date.now());
+    if (remainingMs <= 0) throw new DOMException('Global timeout', 'AbortError');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remainingMs);
+    try {
+      const response = await fetch(
+        `https://api.deepgram.com/v1/listen?${new URLSearchParams(options).toString()}`,
+        {
+          method: 'POST',
+          headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
+          body: buffer as unknown as BodyInit,
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) {
+        await response.body?.cancel();
+        if ([408, 429, 500, 502, 503, 504].includes(response.status)) {
+          throw new Error(`retryable_provider_status_${response.status}`);
+        }
+        throw new BusinessException(
+          'PROVIDER_UNAVAILABLE',
+          'Le service de transcription a refusé cet enregistrement.',
+          false,
+          503,
+        );
+      }
+      return this.normalizeDeepgram((await response.json()) as DeepgramResponse, selectedLanguage);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private providerFailure(requestId: string, error: unknown, deadline: number) {
+    const timedOut =
+      Date.now() >= deadline || (error instanceof DOMException && error.name === 'AbortError');
+    const networkError = !timedOut && error instanceof TypeError;
+    const code = timedOut ? 'TIMEOUT' : networkError ? 'NETWORK_ERROR' : 'PROVIDER_UNAVAILABLE';
+    this.fail(
+      requestId,
+      code,
+      timedOut ? 'provider_timeout' : networkError ? 'network_error' : 'provider_unavailable',
+    );
+    return new BusinessException(
+      code,
+      timedOut
+        ? 'La transcription prend trop de temps. Réessayez.'
+        : networkError
+          ? 'Connexion au service de transcription impossible.'
+          : 'Le service de transcription est temporairement indisponible.',
+      true,
+      timedOut ? 504 : 503,
+    );
   }
 
   private deepgramLanguageFor(language: string): SupportedSpeechLanguage | undefined {
@@ -222,8 +317,8 @@ export class SpeechService implements SpeechProvider {
 
   private detectMime(buffer: Buffer | undefined, declaredMime: string) {
     if (!buffer || buffer.length < 4) {
-      this.fail('AUDIO_EMPTY', 'empty_audio');
-      throw new BusinessException('AUDIO_EMPTY', 'Le fichier audio est vide.', true);
+      this.fail('unknown', 'AUDIO_INVALID', 'empty_audio');
+      throw new BusinessException('AUDIO_INVALID', 'Le fichier audio est vide.', false);
     }
     const ascii = buffer.subarray(0, 12).toString('ascii');
     if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
@@ -233,23 +328,22 @@ export class SpeechService implements SpeechProvider {
     }
     if (ascii.slice(4, 8) === 'ftyp')
       return declaredMime === 'audio/m4a' ? 'audio/m4a' : 'audio/mp4';
-    this.fail('AUDIO_UNSUPPORTED', 'invalid_audio_signature');
+    this.fail('unknown', 'AUDIO_INVALID', 'invalid_audio_signature');
     throw new BusinessException(
-      'AUDIO_UNSUPPORTED',
+      'AUDIO_INVALID',
       'Le contenu ne correspond pas à un format audio pris en charge.',
-      true,
+      false,
     );
   }
 
-  private debug(message: string) {
-    if (this.config.get<string>('NODE_ENV') !== 'production') {
-      this.logger.debug(message);
-    }
-  }
-
-  private fail(code: string, reason: string, result?: Partial<TranscriptResponse>) {
+  private fail(
+    requestId: string,
+    code: string,
+    reason: string,
+    result?: Partial<TranscriptResponse>,
+  ) {
     this.logger.warn(
-      `STT failed code=${code} reason=${reason} durationSeconds=${result?.duration ?? 0} detectedLanguage=${result?.language ?? 'unknown'} averageConfidence=${result?.confidence ?? 0}`,
+      `requestId=${requestId} event=stt_failed code=${code} reason=${reason} audioDurationSeconds=${result?.duration ?? 0} detectedLanguage=${result?.language ?? 'unknown'} averageConfidence=${result?.confidence ?? 0}`,
     );
   }
 }
