@@ -77,8 +77,12 @@ done
   || fail 'no known PostgreSQL superuser can connect; set POSTGRES_LEGACY_ADMIN_USER to the role that initialized the volume'
 admin_psql=(compose exec -T -u postgres "$POSTGRES_SERVICE" psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role")
 
-db_exists="$("${admin_psql[@]}" -d postgres -v db_name="$DB_NAME" -tAc \
-  "SELECT 1 FROM pg_database WHERE datname = :'db_name'" || true)"
+db_exists="$(compose exec -T -u postgres -e Z_DB_NAME="$DB_NAME" "$POSTGRES_SERVICE" \
+  psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role" -d postgres -tA <<'SQL'
+\getenv db_name Z_DB_NAME
+SELECT 1 FROM pg_database WHERE datname = :'db_name';
+SQL
+)"
 [[ "$db_exists" == '1' ]] || fail "target database '$DB_NAME' does not exist"
 
 log 'Inspecting current owners and reconciling the application role...'

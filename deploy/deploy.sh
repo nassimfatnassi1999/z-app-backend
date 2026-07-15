@@ -194,14 +194,17 @@ find_database_admin_role() {
 
 verify_database() {
   require_tools
-  local db_admin_role
+  local db_admin_role database_found
   db_admin_role="$(find_database_admin_role)" \
     || fail 'no known PostgreSQL superuser can verify the existing volume; set POSTGRES_LEGACY_ADMIN_USER to its original owner role'
   log 'Verifying the administrator connection and target database...'
-  compose exec -T -u postgres "$POSTGRES_SERVICE" \
-    psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role" -d postgres -v db_name="$DB_NAME" -tAc \
-    "SELECT 1 FROM pg_database WHERE datname = :'db_name'" | grep -qx '1' \
-    || fail "administrator cannot verify database '$DB_NAME'"
+  database_found="$(compose exec -T -u postgres -e Z_DB_NAME="$DB_NAME" "$POSTGRES_SERVICE" \
+    psql -X -v ON_ERROR_STOP=1 -U "$db_admin_role" -d postgres -tA <<'SQL'
+\getenv db_name Z_DB_NAME
+SELECT 1 FROM pg_database WHERE datname = :'db_name';
+SQL
+  )"
+  [[ "$database_found" == '1' ]] || fail "administrator cannot verify database '$DB_NAME'"
 }
 
 repair_database_permissions() {
