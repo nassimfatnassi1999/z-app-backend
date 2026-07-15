@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   languageMap,
@@ -62,9 +62,12 @@ export class SpeechService implements SpeechProvider {
   async transcribe(file: any, selectedLanguage = 'auto'): Promise<TranscriptResponse> {
     const requestId = randomUUID();
     const startedAt = Date.now();
-    const mime = this.detectMime(file.buffer, this.normalizeMime(file.mimetype, file.originalname));
-    const normalizedSelection = selectedLanguage.trim().toLowerCase() || 'auto';
+    const normalizedSelection =
+      typeof selectedLanguage === 'string'
+        ? selectedLanguage.trim().toLowerCase() || 'auto'
+        : '__invalid__';
     const deepgramLanguage = this.deepgramLanguageFor(normalizedSelection);
+    const mime = this.detectMime(file.buffer, this.normalizeMime(file.mimetype, file.originalname));
     const audioBytes = file.size ?? file.buffer?.length ?? 0;
     this.logger.log(
       `requestId=${requestId} event=stt_started audioBytes=${audioBytes} mime=${mime} selectedLanguage=${normalizedSelection}`,
@@ -109,8 +112,8 @@ export class SpeechService implements SpeechProvider {
           apiKey,
           mime,
           file.buffer,
-          this.buildFallbackOptions(normalized.language),
-          normalized.language === 'unknown' ? null : normalized.language,
+          this.buildFallbackOptions(deepgramLanguage),
+          deepgramLanguage ?? null,
           deadline,
         );
       }
@@ -148,8 +151,9 @@ export class SpeechService implements SpeechProvider {
       this.fail(requestId, 'AUDIO_TOO_SHORT', 'duration_below_one_second', normalized);
       throw new BusinessException('AUDIO_TOO_SHORT', 'L’enregistrement est trop court.', true);
     }
-    const finalLanguage =
-      deepgramLanguage === undefined && normalized.confidence < 0.55
+    const finalLanguage = deepgramLanguage
+      ? deepgramLanguage
+      : normalized.confidence < 0.55
         ? 'unknown'
         : normalized.language;
     if (normalized.transcript.length < 3) {
@@ -200,7 +204,7 @@ export class SpeechService implements SpeechProvider {
   }
 
   private buildDeepgramOptions(language?: SupportedSpeechLanguage): DeepgramOptions {
-    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-3-general';
+    const model = this.config.get<string>('DEEPGRAM_MODEL') || 'nova-3';
     const options: DeepgramOptions = {
       model,
       smart_format: 'true',
@@ -216,16 +220,8 @@ export class SpeechService implements SpeechProvider {
     return { ...options, detect_language: 'true' };
   }
 
-  private buildFallbackOptions(language: NormalizedSpeechLanguage): DeepgramOptions {
-    const common: DeepgramOptions = {
-      smart_format: 'true',
-      punctuate: 'true',
-      paragraphs: 'true',
-      numerals: 'true',
-    };
-    return language === 'unknown'
-      ? { ...common, model: 'nova-3', language: 'multi' }
-      : { ...common, model: 'nova-3-general', language };
+  private buildFallbackOptions(language?: SupportedSpeechLanguage): DeepgramOptions {
+    return this.buildDeepgramOptions(language);
   }
 
   private needsQualityFallback(result: TranscriptResponse) {
@@ -295,10 +291,14 @@ export class SpeechService implements SpeechProvider {
   }
 
   private deepgramLanguageFor(language: string): SupportedSpeechLanguage | undefined {
-    if (isSupportedLanguageInput(language) && language !== 'unknown') {
+    if (isSupportedLanguageInput(language)) {
       return languageMap[language];
     }
-    throw new BadRequestException(unsupportedLanguageResponse);
+    throw new BusinessException(
+      unsupportedLanguageResponse.code,
+      unsupportedLanguageResponse.message,
+      false,
+    );
   }
 
   private normalizeMime(mimetype = '', filename = '') {
@@ -317,8 +317,8 @@ export class SpeechService implements SpeechProvider {
 
   private detectMime(buffer: Buffer | undefined, declaredMime: string) {
     if (!buffer || buffer.length < 4) {
-      this.fail('unknown', 'AUDIO_INVALID', 'empty_audio');
-      throw new BusinessException('AUDIO_INVALID', 'Le fichier audio est vide.', false);
+      this.fail('unknown', 'AUDIO_EMPTY', 'empty_audio');
+      throw new BusinessException('AUDIO_EMPTY', 'Le fichier audio est vide.', false);
     }
     const ascii = buffer.subarray(0, 12).toString('ascii');
     if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';

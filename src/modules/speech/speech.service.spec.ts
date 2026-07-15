@@ -27,7 +27,7 @@ describe('SpeechService', () => {
     await expect(
       service.transcribe({ ...file, buffer: Buffer.alloc(0), size: 0 }),
     ).rejects.toMatchObject({
-      response: { error: { code: 'AUDIO_INVALID' } },
+      response: { error: { code: 'AUDIO_EMPTY' } },
     });
   });
 
@@ -105,6 +105,87 @@ describe('SpeechService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['fr', 'en', 'de', 'es', 'it', 'pt', 'nl'])(
+    'sends manual language %s without automatic detection',
+    async (language) => {
+      const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            results: {
+              channels: [
+                {
+                  detected_language: 'en',
+                  alternatives: [
+                    { transcript: 'Message professionnel complet.', confidence: 0.94 },
+                  ],
+                },
+              ],
+            },
+            metadata: { duration: 3.4 },
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await new SpeechService(config).transcribe(file, language);
+      const url = String(fetchMock.mock.calls[0][0]);
+      expect(url).toContain(`language=${language}`);
+      expect(url).not.toContain('detect_language');
+      expect(result.language).toBe(language);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('rejects an invalid language before contacting Deepgram', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch');
+
+    await expect(new SpeechService(config).transcribe(file, 'xx')).rejects.toMatchObject({
+      response: { error: { code: 'INVALID_LANGUAGE' } },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the same manual language on its single quality retry', async () => {
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            results: { channels: [{ alternatives: [{ transcript: '', confidence: 0 }] }] },
+            metadata: { duration: 2.4 },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            results: {
+              channels: [
+                {
+                  alternatives: [
+                    { transcript: 'Buongiorno, confermo la riunione.', confidence: 0.91 },
+                  ],
+                },
+              ],
+            },
+            metadata: { duration: 2.4 },
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const result = await new SpeechService(config).transcribe(file, 'it');
+
+    expect(result.language).toBe('it');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      const url = String(call[0]);
+      expect(url).toContain('language=it');
+      expect(url).not.toContain('detect_language');
+    }
+  });
+
   it('limits a low-quality fallback to one second attempt', async () => {
     const fetchMock = jest
       .spyOn(global, 'fetch')
@@ -137,8 +218,8 @@ describe('SpeechService', () => {
     expect(result.transcript).toContain('Guten Tag');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const fallbackUrl = String(fetchMock.mock.calls[1][0]);
-    expect(fallbackUrl).toContain('model=nova-3');
-    expect(fallbackUrl).toContain('language=multi');
-    expect(fallbackUrl).not.toContain('detect_language');
+    expect(fallbackUrl).toContain('model=nova-3-general');
+    expect(fallbackUrl).toContain('detect_language=true');
+    expect(fallbackUrl).not.toMatch(/[?&]language=/);
   });
 });

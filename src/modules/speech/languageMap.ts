@@ -19,7 +19,7 @@ export const supportedLanguageCodes = new Set<SupportedSpeechLanguage>(
 );
 
 export const unsupportedLanguageResponse = {
-  code: 'UNSUPPORTED_LANGUAGE',
+  code: 'INVALID_LANGUAGE',
   message: 'Selected language is not supported.',
 } as const;
 
@@ -28,7 +28,6 @@ export function isSupportedLanguageInput(language?: string | null): boolean {
   return (
     normalized === '' ||
     normalized === 'auto' ||
-    normalized === 'unknown' ||
     supportedLanguageCodes.has(normalized as SupportedSpeechLanguage)
   );
 }
