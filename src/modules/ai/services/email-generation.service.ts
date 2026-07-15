@@ -19,7 +19,7 @@ export class EmailGenerationService {
       prompt: generationPromptV1,
       input,
       schema: generatedEmailSchema,
-      temperature: 0.2,
+      temperature: 0.1,
     });
   }
 }

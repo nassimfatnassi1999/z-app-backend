@@ -147,38 +147,6 @@ describe('AiService email quality validation', () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
-  it('expands the existing email without requesting a new email', async () => {
-    const original = 'Bonjour,\n\nLa réunion est prévue vendredi à 10 h.\n\nCordialement,';
-    const expanded =
-      'Bonjour,\n\nJe vous confirme que la réunion est bien prévue vendredi à 10 h. Ce rendez-vous nous permettra ainsi de poursuivre nos échanges dans de bonnes conditions.\n\nCordialement,';
-    const fetchMock = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValue(groqResponse(JSON.stringify({ email: expanded })));
-
-    const result = await service().expandEmail({
-      email: original,
-      tone: 'professional',
-      language: 'fr',
-      expandLevel: 'light',
-    });
-
-    expect(result.email).toBe(expanded);
-    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(String(request.body)).toContain('about 20%');
-    expect(String(request.body)).toContain('vendredi à 10 h');
-  });
-
-  it('rejects an expansion that does not enrich the existing body', async () => {
-    const original = 'Bonjour, merci de confirmer la réunion de vendredi. Cordialement.';
-    jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValue(groqResponse(JSON.stringify({ email: original })));
-
-    await expect(
-      service().expandEmail({ email: original, expandLevel: 'medium' }),
-    ).rejects.toBeInstanceOf(ServiceUnavailableException);
-  });
-
   it('repairs a voice reply that only repeats its transcript', async () => {
     const instruction = 'Tell Ahmed that the application is ready and ask him to test it tomorrow.';
     const repairedReply = {

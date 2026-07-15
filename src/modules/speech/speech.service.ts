@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   languageMap,
@@ -14,6 +9,7 @@ import {
   unsupportedLanguageResponse,
 } from './languageMap';
 import { fetchWithTimeout } from '../../common/http/fetch-with-timeout';
+import { BusinessException } from '../../common/errors/business-error';
 
 type DeepgramResponse = {
   results?: {
@@ -67,39 +63,69 @@ export class SpeechService implements SpeechProvider {
     const normalizedSelection = selectedLanguage.trim().toLowerCase() || 'auto';
     const deepgramLanguage = this.deepgramLanguageFor(normalizedSelection);
     const deepgramOptions = this.buildDeepgramOptions(deepgramLanguage);
-    this.debug(`received file mime: ${file.mimetype || 'unknown'} -> ${mime}`);
-    this.debug(`received file size: ${file.size ?? file.buffer?.length ?? 0}`);
-    this.debug(`selected speech language: ${normalizedSelection}`);
-    this.debug(`Deepgram language: ${deepgramLanguage ?? 'auto-detect'}`);
-    this.debug(`Deepgram options: ${JSON.stringify(deepgramOptions)}`);
+    const audioBytes = file.size ?? file.buffer?.length ?? 0;
+    this.logger.log(
+      `STT request received audioBytes=${audioBytes} mime=${mime} selectedLanguage=${normalizedSelection}`,
+    );
 
     if (!this.acceptedMime.has(mime)) {
-      throw new BadRequestException('Format audio non supporté.');
+      this.fail('AUDIO_UNSUPPORTED', 'unsupported_format');
+      throw new BusinessException(
+        'AUDIO_UNSUPPORTED',
+        'Le format de cet enregistrement n’est pas pris en charge.',
+        true,
+      );
     }
 
     const apiKey = this.config.get<string>('DEEPGRAM_API_KEY');
     if (!apiKey || apiKey.startsWith('REPLACE_WITH')) {
-      throw new ServiceUnavailableException('Deepgram API key missing');
+      this.fail('STT_PROVIDER_ERROR', 'provider_not_configured');
+      throw new BusinessException(
+        'STT_PROVIDER_ERROR',
+        'Impossible de contacter le service de transcription.',
+        true,
+        503,
+      );
     }
 
-    this.debug('Deepgram request started');
     const params = new URLSearchParams(deepgramOptions);
 
-    const response = await fetchWithTimeout(
-      `https://api.deepgram.com/v1/listen?${params.toString()}`,
-      {
-        method: 'POST',
-        headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
-        body: file.buffer as unknown as BodyInit,
-      },
-      { timeoutMs: 30_000, retries: 1, errorMessage: 'Deepgram transcription failed' },
-    );
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        `https://api.deepgram.com/v1/listen?${params.toString()}`,
+        {
+          method: 'POST',
+          headers: { authorization: `Token ${apiKey}`, 'content-type': mime },
+          body: file.buffer as unknown as BodyInit,
+        },
+        { timeoutMs: 30_000, retries: 1, errorMessage: 'Deepgram transcription failed' },
+      );
+    } catch {
+      this.fail('STT_PROVIDER_TIMEOUT', 'provider_timeout_or_network');
+      throw new BusinessException(
+        'STT_PROVIDER_TIMEOUT',
+        'Le service de transcription met trop de temps à répondre.',
+        true,
+        504,
+      );
+    }
 
     if (!response.ok) {
-      const body = await response.text();
-      this.debug(`Deepgram error status: ${response.status}`);
-      this.debug(`Deepgram error body length: ${body.length}`);
-      throw new ServiceUnavailableException('Deepgram transcription failed');
+      await response.body?.cancel();
+      const isTimeout = response.status === 408 || response.status === 504;
+      this.fail(
+        isTimeout ? 'STT_PROVIDER_TIMEOUT' : 'STT_PROVIDER_ERROR',
+        `provider_status_${response.status}`,
+      );
+      throw new BusinessException(
+        isTimeout ? 'STT_PROVIDER_TIMEOUT' : 'STT_PROVIDER_ERROR',
+        isTimeout
+          ? 'Le service de transcription met trop de temps à répondre.'
+          : 'Impossible de contacter le service de transcription.',
+        true,
+        isTimeout ? 504 : 503,
+      );
     }
 
     const json = (await response.json()) as DeepgramResponse;
@@ -108,15 +134,17 @@ export class SpeechService implements SpeechProvider {
       deepgramLanguage === undefined && normalized.confidence < 0.55
         ? 'unknown'
         : normalized.language;
-    if (!normalized.transcript) {
-      throw new BadRequestException({
-        success: false,
-        error: {
-          code: 'AUDIO_TOO_SILENT',
-          message: 'Aucune voix claire n’a été détectée.',
-          retryable: true,
-        },
-      });
+    if (normalized.transcript.length < 3) {
+      this.fail('AUDIO_TOO_SILENT', 'transcript_too_short', normalized);
+      throw new BusinessException(
+        'AUDIO_TOO_SILENT',
+        'Nous n’avons pas entendu suffisamment de voix pour créer votre email.',
+        true,
+      );
+    }
+    if (normalized.confidence < 0.35) {
+      this.fail('STT_LOW_CONFIDENCE', 'confidence_below_threshold', normalized);
+      throw new BusinessException('STT_LOW_CONFIDENCE', 'La qualité audio est insuffisante.', true);
     }
     const result = {
       ...normalized,
@@ -124,16 +152,8 @@ export class SpeechService implements SpeechProvider {
       requiresConfirmation: normalized.confidence < 0.65,
       uncertainEntities: [],
     };
-    this.debug(`Deepgram detected language: ${normalized.language}`);
-    this.debug(`confidence: ${normalized.confidence}`);
-    this.debug(`transcript length: ${normalized.transcript.length}`);
-    this.debug(
-      `returned response body shape: ${JSON.stringify({
-        transcript: 'string',
-        language: 'string',
-        confidence: 'number',
-        duration: 'number',
-      })}`,
+    this.logger.log(
+      `STT completed durationSeconds=${normalized.duration} detectedLanguage=${normalized.language} averageConfidence=${normalized.confidence.toFixed(3)} transcriptChars=${normalized.transcript.length}`,
     );
     return result;
   }
@@ -201,7 +221,10 @@ export class SpeechService implements SpeechProvider {
   }
 
   private detectMime(buffer: Buffer | undefined, declaredMime: string) {
-    if (!buffer || buffer.length < 4) throw new BadRequestException('Fichier audio vide.');
+    if (!buffer || buffer.length < 4) {
+      this.fail('AUDIO_EMPTY', 'empty_audio');
+      throw new BusinessException('AUDIO_EMPTY', 'Le fichier audio est vide.', true);
+    }
     const ascii = buffer.subarray(0, 12).toString('ascii');
     if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
     if (buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'audio/webm';
@@ -210,8 +233,11 @@ export class SpeechService implements SpeechProvider {
     }
     if (ascii.slice(4, 8) === 'ftyp')
       return declaredMime === 'audio/m4a' ? 'audio/m4a' : 'audio/mp4';
-    throw new BadRequestException(
-      'Le contenu du fichier ne correspond pas à un format audio supporté.',
+    this.fail('AUDIO_UNSUPPORTED', 'invalid_audio_signature');
+    throw new BusinessException(
+      'AUDIO_UNSUPPORTED',
+      'Le contenu ne correspond pas à un format audio pris en charge.',
+      true,
     );
   }
 
@@ -219,5 +245,11 @@ export class SpeechService implements SpeechProvider {
     if (this.config.get<string>('NODE_ENV') !== 'production') {
       this.logger.debug(message);
     }
+  }
+
+  private fail(code: string, reason: string, result?: Partial<TranscriptResponse>) {
+    this.logger.warn(
+      `STT failed code=${code} reason=${reason} durationSeconds=${result?.duration ?? 0} detectedLanguage=${result?.language ?? 'unknown'} averageConfidence=${result?.confidence ?? 0}`,
+    );
   }
 }

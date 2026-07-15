@@ -1,6 +1,5 @@
 import {
   Body,
-  BadRequestException,
   Controller,
   Headers,
   Post,
@@ -14,6 +13,7 @@ import { SpeechService } from './speech.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { IdempotencyService } from '../../common/idempotency/idempotency.service';
+import { BusinessException } from '../../common/errors/business-error';
 
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 
@@ -45,7 +45,7 @@ export class SpeechController {
   ) {
     const file = files.audio?.[0] ?? files.file?.[0];
     if (!file) {
-      throw new BadRequestException('Aucun fichier audio reçu.');
+      throw new BusinessException('AUDIO_EMPTY', 'Aucun fichier audio reçu.', true);
     }
 
     return this.idempotency.run('speech:transcribe', idempotencyKey, () =>

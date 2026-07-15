@@ -29,6 +29,10 @@ export class GroqJsonProvider {
         body: JSON.stringify({
           model,
           temperature: options.temperature,
+          top_p: 0.15,
+          presence_penalty: 0,
+          frequency_penalty: 0,
+          seed: 7,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: options.prompt },
