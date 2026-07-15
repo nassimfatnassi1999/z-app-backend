@@ -1,22 +1,30 @@
 import { z } from 'zod';
 
 const shortText = z.string().trim().max(500);
+const extractedList = (maximum: number) =>
+  z.preprocess((value) => (value === null ? [] : value), z.array(shortText).max(maximum));
+const extractedLabel = (fallback: string, maximum: number) =>
+  z.preprocess(
+    (value) => (value === null || value === '' ? fallback : value),
+    z.string().trim().min(1).max(maximum),
+  );
 
 export const transcriptExtractionSchema = z
   .object({
     language: z.string().trim().min(2).max(12),
-    intent: z.string().trim().min(1).max(80),
+    intent: extractedLabel('rewrite', 80),
     recipient: z.string().trim().max(320).nullable(),
-    facts: z.array(shortText).max(50),
-    constraints: z.array(shortText).max(30),
-    requestedActions: z.array(shortText).max(20),
-    dates: z.array(shortText).max(20),
-    amounts: z.array(shortText).max(20),
-    names: z.array(shortText).max(30),
-    tone: z.string().trim().min(1).max(40),
-    ambiguities: z.array(shortText).max(10),
+    facts: extractedList(50),
+    constraints: extractedList(30),
+    requestedActions: extractedList(20),
+    dates: extractedList(20),
+    amounts: extractedList(20),
+    names: extractedList(30),
+    keywords: extractedList(30),
+    tone: extractedLabel('professional', 40),
+    ambiguities: extractedList(10),
     needsClarification: z.boolean(),
-    clarificationQuestions: z.array(shortText).max(3),
+    clarificationQuestions: extractedList(3),
   })
   .strict()
   .superRefine((value, context) => {
@@ -30,19 +38,11 @@ export const transcriptExtractionSchema = z
 
 export const generatedEmailSchema = z
   .object({
-    subject: z.string().trim().min(2).max(160),
-    body: z.string().trim().min(10).max(50_000),
     language: z.string().trim().min(2).max(12),
-    tone: z.string().trim().min(1).max(40),
-    intent: z.string().trim().min(1).max(80),
-    recipientSuggestion: z.string().trim().max(320).nullable(),
-  })
-  .strict();
-
-export const generatedEmailContentSchema = z
-  .object({
     subject: z.string().trim().min(2).max(160),
+    recipient: z.string().trim().max(320),
     body: z.string().trim().min(10).max(50_000),
+    confidence: z.number().min(0).max(1),
   })
   .strict();
 
@@ -60,6 +60,5 @@ export const emailValidationSchema = z
   .strict();
 
 export type TranscriptExtraction = z.infer<typeof transcriptExtractionSchema>;
-export type GeneratedEmailContent = z.infer<typeof generatedEmailContentSchema>;
 export type GeneratedEmail = z.infer<typeof generatedEmailSchema>;
 export type EmailValidation = z.infer<typeof emailValidationSchema>;

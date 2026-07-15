@@ -16,8 +16,11 @@ export class GroqJsonProvider {
     kind: ModelKind;
     prompt: string;
     input: unknown;
-    schema: z.ZodType<T>;
+    schema: z.ZodType<T, z.ZodTypeDef, unknown>;
     temperature: number;
+    topP?: number;
+    presencePenalty?: number;
+    frequencyPenalty?: number;
   }): Promise<{ value: T; model: string }> {
     const apiKey = this.config.get<string>('GROQ_API_KEY')!;
     const model = this.modelFor(options.kind);
@@ -30,6 +33,9 @@ export class GroqJsonProvider {
       model,
       timeoutMs,
       temperature: options.temperature,
+      topP: options.topP ?? 0.15,
+      presencePenalty: options.presencePenalty ?? 0,
+      frequencyPenalty: options.frequencyPenalty ?? 0,
       messages: [
         { role: 'system', content: options.prompt },
         { role: 'user', content: JSON.stringify(options.input) },
@@ -47,6 +53,9 @@ export class GroqJsonProvider {
       model,
       timeoutMs,
       temperature: 0,
+      topP: 0.15,
+      presencePenalty: 0,
+      frequencyPenalty: 0,
       messages: [
         { role: 'system', content: options.prompt },
         {
@@ -79,6 +88,9 @@ export class GroqJsonProvider {
     model: string;
     timeoutMs: number;
     temperature: number;
+    topP: number;
+    presencePenalty: number;
+    frequencyPenalty: number;
     messages: Array<{ role: 'system' | 'user'; content: string }>;
   }) {
     let response: Response;
@@ -94,9 +106,9 @@ export class GroqJsonProvider {
           body: JSON.stringify({
             model: options.model,
             temperature: options.temperature,
-            top_p: 0.15,
-            presence_penalty: 0,
-            frequency_penalty: 0,
+            top_p: options.topP,
+            presence_penalty: options.presencePenalty,
+            frequency_penalty: options.frequencyPenalty,
             seed: 7,
             response_format: { type: 'json_object' },
             messages: options.messages,
@@ -140,7 +152,7 @@ export class GroqJsonProvider {
     }
   }
 
-  private parse<T>(schema: z.ZodType<T>, content: string) {
+  private parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, content: string) {
     try {
       const parsed: unknown = JSON.parse(content);
       const result = schema.safeParse(parsed);

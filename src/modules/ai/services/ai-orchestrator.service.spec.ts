@@ -11,6 +11,7 @@ const extractionValue = {
   dates: ['demain matin'],
   amounts: [],
   names: ['Ahmed'],
+  keywords: [],
   tone: 'professional',
   ambiguities: [],
   needsClarification: false,
@@ -34,9 +35,8 @@ describe('AiOrchestratorService', () => {
       subject: 'Réunion',
       body: 'Merci de confirmer la réunion de demain.',
       language: 'fr',
-      tone: 'professional',
-      intent: 'Demander une confirmation',
-      recipientSuggestion: 'Ahmed',
+      recipient: 'Ahmed',
+      confidence: 0.84,
     };
     const service = new AiOrchestratorService(
       { extract: jest.fn().mockResolvedValue({ value: extractionValue }) } as never,
@@ -52,7 +52,7 @@ describe('AiOrchestratorService', () => {
       service.compose({ transcript: 'Ahmed, merci de confirmer la réunion de demain.' }),
     ).resolves.toMatchObject({
       status: 'completed',
-      email: generated,
+      email: { ...generated, confidence: 0.98 },
       metadata: { retryUsed: false, fallbackUsed: false },
     });
   });
@@ -66,9 +66,8 @@ describe('AiOrchestratorService', () => {
           subject: 'Absence',
           body: 'Bonjour Ahmed. Le projet Atlas continue. Je serai absent demain matin.',
           language: 'fr',
-          tone: 'professional',
-          intent: 'Informer',
-          recipientSuggestion: 'Ahmed',
+          recipient: 'Ahmed',
+          confidence: 0.7,
         },
       }),
     };
@@ -76,9 +75,8 @@ describe('AiOrchestratorService', () => {
       subject: 'Message',
       body: 'Bonjour Ahmed. Je serai absent demain matin et reviendrai vers midi.',
       language: 'fr',
-      tone: 'professional',
-      intent: 'Informer',
-      recipientSuggestion: 'Ahmed',
+      recipient: 'Ahmed',
+      confidence: 0.85,
     };
     const repair = { repair: jest.fn().mockResolvedValue({ value: repaired }) };
     const validation = { validate: jest.fn().mockResolvedValue(passingValidation) };
@@ -97,7 +95,7 @@ describe('AiOrchestratorService', () => {
     expect(repair.repair).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       status: 'completed',
-      email: repaired,
+      email: { ...repaired, confidence: 0.95 },
       metadata: { retryUsed: true, fallbackUsed: false },
     });
   });
@@ -108,9 +106,8 @@ describe('AiOrchestratorService', () => {
       subject: 'Réunion Atlas',
       body: 'Je serai absent demain matin pour rencontrer Sarah à Paris.',
       language: 'fr',
-      tone: 'professional',
-      intent: 'Informer',
-      recipientSuggestion: null,
+      recipient: 'Ahmed',
+      confidence: 0.4,
     };
     const service = new AiOrchestratorService(
       { extract: jest.fn().mockResolvedValue({ value: extractionValue }) } as never,

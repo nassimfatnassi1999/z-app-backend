@@ -3,7 +3,7 @@ import { repairPromptV1 } from '../prompts/registry';
 import {
   EmailValidation,
   GeneratedEmail,
-  generatedEmailContentSchema,
+  generatedEmailSchema,
   TranscriptExtraction,
 } from '../schemas/ai.schemas';
 import { GroqJsonProvider } from '../providers/groq-json.provider';
@@ -21,17 +21,18 @@ export class EmailRepairService {
       kind: 'generation',
       prompt: repairPromptV1,
       input,
-      schema: generatedEmailContentSchema,
-      temperature: 0.05,
+      schema: generatedEmailSchema,
+      temperature: 0.1,
+      topP: 0.2,
+      presencePenalty: 0,
+      frequencyPenalty: 0.1,
     });
     return {
       model: repaired.model,
       value: {
         ...repaired.value,
         language: input.extraction.language,
-        tone: 'professional',
-        intent: input.extraction.intent,
-        recipientSuggestion: input.extraction.recipient,
+        recipient: input.extraction.recipient ?? '',
       },
     };
   }

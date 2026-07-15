@@ -1,8 +1,4 @@
-import {
-  generatedEmailContentSchema,
-  generatedEmailSchema,
-  transcriptExtractionSchema,
-} from './ai.schemas';
+import { generatedEmailSchema, transcriptExtractionSchema } from './ai.schemas';
 
 const extraction = {
   language: 'fr',
@@ -14,6 +10,7 @@ const extraction = {
   dates: [],
   amounts: [],
   names: [],
+  keywords: ['rendez-vous', 'annulé', 'confirmer'],
   tone: 'professional',
   ambiguities: [],
   needsClarification: false,
@@ -29,18 +26,28 @@ describe('strict AI schemas', () => {
     expect(() =>
       transcriptExtractionSchema.parse({ ...extraction, needsClarification: true }),
     ).toThrow());
+  it('safely normalizes empty extraction values returned as null', () => {
+    expect(
+      transcriptExtractionSchema.parse({
+        ...extraction,
+        intent: null,
+        constraints: null,
+        amounts: null,
+        ambiguities: null,
+      }),
+    ).toMatchObject({ intent: 'rewrite', constraints: [], amounts: [], ambiguities: [] });
+  });
   it('rejects incomplete generated emails', () =>
     expect(() => generatedEmailSchema.parse({ subject: 'Objet' })).toThrow());
-  it('accepts only subject and body from the generation model', () => {
-    expect(
-      generatedEmailContentSchema.parse({ subject: 'Objet', body: 'Corps professionnel.' }),
-    ).toEqual({ subject: 'Objet', body: 'Corps professionnel.' });
-    expect(() =>
-      generatedEmailContentSchema.parse({
-        subject: 'Objet',
-        body: 'Corps professionnel.',
-        language: 'fr',
-      }),
-    ).toThrow();
+  it('accepts exactly the public five-field email contract', () => {
+    const email = {
+      language: 'fr',
+      subject: 'Objet',
+      recipient: '',
+      body: 'Corps professionnel.',
+      confidence: 0.98,
+    };
+    expect(generatedEmailSchema.parse(email)).toEqual(email);
+    expect(() => generatedEmailSchema.parse({ ...email, tone: 'professional' })).toThrow();
   });
 });

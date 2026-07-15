@@ -29,7 +29,7 @@ export class AiOrchestratorService {
     const generated = await this.generation.generate({ ...input, extraction: extracted.value });
     let email = generated.value;
     let validation = await this.validation.validate(input.transcript, extracted.value, email);
-    let audit = this.consistency.audit(input.transcript, email);
+    let audit = this.consistency.audit(input.transcript, email, extracted.value);
     validation = this.withDeterministicAudit(validation, audit);
     let retryUsed = false;
     if (!validation.pass) {
@@ -44,7 +44,7 @@ export class AiOrchestratorService {
         })
       ).value;
       validation = await this.validation.validate(input.transcript, extracted.value, email);
-      audit = this.consistency.audit(input.transcript, email);
+      audit = this.consistency.audit(input.transcript, email, extracted.value);
       validation = this.withDeterministicAudit(validation, audit);
     }
     let fallbackUsed = false;
@@ -52,12 +52,11 @@ export class AiOrchestratorService {
       fallbackUsed = true;
       this.logRejection('repair', input.transcript, email.body, audit, validation);
       email = {
-        subject: 'Message',
-        body: this.minimalRewrite(input.transcript),
         language: extracted.value.language,
-        tone: 'professional',
-        intent: extracted.value.intent,
-        recipientSuggestion: null,
+        subject: this.fallbackSubject(extracted.value.language),
+        recipient: extracted.value.recipient ?? '',
+        body: this.minimalRewrite(input.transcript),
+        confidence: 0.9,
       };
       validation = {
         supportedFacts: true,
@@ -70,6 +69,12 @@ export class AiOrchestratorService {
         pass: true,
       };
     }
+    email = {
+      ...email,
+      language: extracted.value.language,
+      recipient: extracted.value.recipient ?? '',
+      confidence: fallbackUsed ? 0.9 : retryUsed ? 0.95 : 0.98,
+    };
     this.logger.log(
       `AI comparison completed transcriptChars=${input.transcript.length} emailChars=${email.body.length} retryUsed=${retryUsed} fallbackUsed=${fallbackUsed}`,
     );
@@ -84,7 +89,7 @@ export class AiOrchestratorService {
         promptVersion: generationPromptVersion,
         retryUsed,
         fallbackUsed,
-        qualityScore: 1,
+        qualityScore: email.confidence,
       },
     };
   }
@@ -97,6 +102,10 @@ export class AiOrchestratorService {
     return {
       ...validation,
       supportedFacts: false,
+      missingFacts: [
+        ...validation.missingFacts,
+        ...audit.missing.map((issue) => `Missing ${issue.kind}: ${issue.value}`),
+      ],
       unsupportedClaims: [
         ...validation.unsupportedClaims,
         ...audit.unsupported.map((issue) => `Unsupported ${issue.kind}: ${issue.value}`),
@@ -113,6 +122,20 @@ export class AiOrchestratorService {
       .trim();
   }
 
+  private fallbackSubject(language: string) {
+    const subjects: Record<string, string> = {
+      fr: 'Message',
+      en: 'Message',
+      de: 'Nachricht',
+      es: 'Mensaje',
+      it: 'Messaggio',
+      pt: 'Mensagem',
+      nl: 'Bericht',
+      tr: 'Mesaj',
+    };
+    return subjects[language.toLocaleLowerCase().split('-')[0]] ?? 'Message';
+  }
+
   private logRejection(
     stage: string,
     transcript: string,
@@ -121,7 +144,7 @@ export class AiOrchestratorService {
     validation: Awaited<ReturnType<EmailValidationService['validate']>>,
   ) {
     this.logger.warn(
-      `AI output rejected stage=${stage} transcriptChars=${transcript.length} emailChars=${emailBody.length} unsupportedByKind=${JSON.stringify(audit.counts)} missingFactCount=${validation.missingFacts.length} unsupportedClaimCount=${validation.unsupportedClaims.length}`,
+      `AI output rejected stage=${stage} transcriptChars=${transcript.length} emailChars=${emailBody.length} unsupportedByKind=${JSON.stringify(audit.counts)} missingByKind=${JSON.stringify(audit.missingCounts)} missingFactCount=${validation.missingFacts.length} unsupportedClaimCount=${validation.unsupportedClaims.length}`,
     );
   }
 }

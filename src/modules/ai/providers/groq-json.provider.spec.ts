@@ -32,6 +32,9 @@ function complete(service: GroqJsonProvider) {
     input: { transcript: 'Bonjour, confirmez la réunion.' },
     schema: emailSchema,
     temperature: 0.1,
+    topP: 0.2,
+    presencePenalty: 0,
+    frequencyPenalty: 0.1,
   });
 }
 
@@ -57,6 +60,12 @@ describe('GroqJsonProvider', () => {
       model: 'test-model',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({
+      temperature: 0.1,
+      top_p: 0.2,
+      presence_penalty: 0,
+      frequency_penalty: 0.1,
+    });
   });
 
   it('repairs an invalid response exactly once', async () => {
@@ -74,6 +83,12 @@ describe('GroqJsonProvider', () => {
     expect(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)).toContain(
       'Repair the previous response',
     );
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toMatchObject({
+      temperature: 0,
+      top_p: 0.15,
+      presence_penalty: 0,
+      frequency_penalty: 0,
+    });
   });
 
   it('rejects an invalid repair without a third request', async () => {

@@ -10,6 +10,34 @@ import { GroqJsonProvider } from '../providers/groq-json.provider';
 
 @Injectable()
 export class EmailValidationService {
+  private readonly neutralScaffolding = new Set(
+    [
+      'bonjour',
+      'bonsoir',
+      'cordialement',
+      'bien cordialement',
+      'hello',
+      'dear',
+      'sincerely',
+      'regards',
+      'best regards',
+      'kind regards',
+      'guten tag',
+      'mit freundlichen grüßen',
+      'hola',
+      'atentamente',
+      'saludos cordiales',
+      'buongiorno',
+      'cordiali saluti',
+      'olá',
+      'cumprimentos',
+      'geachte',
+      'met vriendelijke groet',
+      'merhaba',
+      'saygılarımla',
+    ].map((value) => this.normalize(value)),
+  );
+
   constructor(private readonly groq: GroqJsonProvider) {}
   async validate(
     transcript: string,
@@ -24,17 +52,45 @@ export class EmailValidationService {
       temperature: 0,
     });
     const value = result.value;
+    const normalizedTranscript = this.normalize(transcript);
+    const normalizedEmail = this.normalize([email.subject, email.body, email.recipient].join('\n'));
+    const unsupportedClaims = value.unsupportedClaims.filter((claim) => {
+      const normalizedClaim = this.normalizeClaim(claim);
+      return (
+        !normalizedTranscript.includes(normalizedClaim) &&
+        !this.neutralScaffolding.has(normalizedClaim)
+      );
+    });
+    const missingFacts = value.missingFacts.filter(
+      (fact) => !normalizedEmail.includes(this.normalizeClaim(fact)),
+    );
+    const pass =
+      value.supportedFacts &&
+      value.negationPreserved &&
+      value.languageMatch &&
+      value.toneMatch &&
+      value.actionClear &&
+      missingFacts.length === 0 &&
+      unsupportedClaims.length === 0;
     return {
       ...value,
-      pass:
-        value.pass &&
-        value.supportedFacts &&
-        value.negationPreserved &&
-        value.languageMatch &&
-        value.toneMatch &&
-        value.actionClear &&
-        value.missingFacts.length === 0 &&
-        value.unsupportedClaims.length === 0,
+      missingFacts,
+      unsupportedClaims,
+      pass,
     };
+  }
+
+  private normalizeClaim(value: string) {
+    return this.normalize(value).replace(/^["'«»\s]+|["'«».,;:!?\s]+$/g, '');
+  }
+
+  private normalize(value: string) {
+    return value
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[’]/g, "'")
+      .toLocaleLowerCase('fr')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 }
