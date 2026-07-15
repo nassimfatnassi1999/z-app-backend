@@ -90,7 +90,7 @@ export class AiService implements AiProvider {
       throw new BadRequestException('Transcript is empty after cleaning');
     }
     const apiKey = this.config.get<string>('GROQ_API_KEY');
-    const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    const model = this.legacyModel();
     const selectedTone = dto.tone || 'auto';
     if (selectedTone === 'custom' && !dto.customTone?.trim()) {
       throw new BadRequestException('customTone is required when tone is custom');
@@ -103,7 +103,7 @@ export class AiService implements AiProvider {
     }
 
     const response = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
+      this.groqEndpoint(),
       {
         method: 'POST',
         headers: {
@@ -133,7 +133,7 @@ export class AiService implements AiProvider {
           response_format: { type: 'json_object' },
         }),
       },
-      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+      { timeoutMs: this.requestTimeout(), retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
     );
 
     if (!response.ok) {
@@ -164,7 +164,7 @@ export class AiService implements AiProvider {
       ? dto.originalEmail.subject.trim()
       : `Re: ${dto.originalEmail.subject.trim()}`;
     const apiKey = this.config.get<string>('GROQ_API_KEY');
-    const model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    const model = this.legacyModel();
     const tone = dto.tone || 'auto';
     const cleanedInstruction = this.cleanTranscript(dto.replyInstruction);
     if (!cleanedInstruction) {
@@ -177,7 +177,7 @@ export class AiService implements AiProvider {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     }
     const response = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
+      this.groqEndpoint(),
       {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -210,7 +210,7 @@ export class AiService implements AiProvider {
           ],
         }),
       },
-      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+      { timeoutMs: this.requestTimeout(), retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
     );
     if (!response.ok) throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
@@ -245,7 +245,7 @@ export class AiService implements AiProvider {
     issues: string[],
   ) {
     const response = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
+      this.groqEndpoint(),
       {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -279,7 +279,7 @@ export class AiService implements AiProvider {
           ],
         }),
       },
-      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+      { timeoutMs: this.requestTimeout(), retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
     );
     if (!response.ok) throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
     const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
@@ -336,7 +336,7 @@ export class AiService implements AiProvider {
       },
     ];
     const response = await fetchWithTimeout(
-      'https://api.groq.com/openai/v1/chat/completions',
+      this.groqEndpoint(),
       {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -347,7 +347,7 @@ export class AiService implements AiProvider {
           response_format: { type: 'json_object' },
         }),
       },
-      { timeoutMs: 30_000, retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
+      { timeoutMs: this.requestTimeout(), retries: 0, errorMessage: GENERATION_FAILED_MESSAGE },
     );
     if (!response.ok) {
       throw new ServiceUnavailableException(GENERATION_FAILED_MESSAGE);
@@ -492,6 +492,24 @@ export class AiService implements AiProvider {
     if (tone === 'custom') return tone;
     const allowed = new Set<string>(DETECTABLE_TONES);
     return allowed.has(tone) ? tone : 'professional';
+  }
+
+  private groqEndpoint() {
+    const baseUrl = this.config.get<string>('GROQ_BASE_URL') || 'https://api.groq.com/openai/v1';
+    return `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+  }
+
+  private requestTimeout() {
+    const configured = Number(this.config.get<string>('AI_REQUEST_TIMEOUT_MS'));
+    return Number.isFinite(configured) && configured >= 1_000 ? configured : 30_000;
+  }
+
+  private legacyModel() {
+    return (
+      this.config.get<string>('GROQ_MODEL') ||
+      this.config.get<string>('GROQ_EMAIL_MODEL') ||
+      'llama-3.3-70b-versatile'
+    );
   }
 
   private assertSupportedLanguage(language?: string) {

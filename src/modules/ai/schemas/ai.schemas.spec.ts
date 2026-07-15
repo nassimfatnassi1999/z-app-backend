@@ -1,4 +1,8 @@
-import { generatedEmailSchema, transcriptExtractionSchema } from './ai.schemas';
+import {
+  generatedEmailContentSchema,
+  generatedEmailSchema,
+  transcriptExtractionSchema,
+} from './ai.schemas';
 
 const extraction = {
   language: 'fr',
@@ -27,4 +31,16 @@ describe('strict AI schemas', () => {
     ).toThrow());
   it('rejects incomplete generated emails', () =>
     expect(() => generatedEmailSchema.parse({ subject: 'Objet' })).toThrow());
+  it('accepts only subject and body from the generation model', () => {
+    expect(
+      generatedEmailContentSchema.parse({ subject: 'Objet', body: 'Corps professionnel.' }),
+    ).toEqual({ subject: 'Objet', body: 'Corps professionnel.' });
+    expect(() =>
+      generatedEmailContentSchema.parse({
+        subject: 'Objet',
+        body: 'Corps professionnel.',
+        language: 'fr',
+      }),
+    ).toThrow();
+  });
 });

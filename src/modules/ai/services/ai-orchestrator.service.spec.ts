@@ -29,6 +29,34 @@ const passingValidation = {
 };
 
 describe('AiOrchestratorService', () => {
+  it('returns a generated email when extraction, generation and validation succeed', async () => {
+    const generated = {
+      subject: 'Réunion',
+      body: 'Merci de confirmer la réunion de demain.',
+      language: 'fr',
+      tone: 'professional',
+      intent: 'Demander une confirmation',
+      recipientSuggestion: 'Ahmed',
+    };
+    const service = new AiOrchestratorService(
+      { extract: jest.fn().mockResolvedValue({ value: extractionValue }) } as never,
+      {
+        generate: jest.fn().mockResolvedValue({ model: 'test-model', value: generated }),
+      } as never,
+      { validate: jest.fn().mockResolvedValue(passingValidation) } as never,
+      { repair: jest.fn() } as never,
+      new FactualConsistencyService(),
+    );
+
+    await expect(
+      service.compose({ transcript: 'Ahmed, merci de confirmer la réunion de demain.' }),
+    ).resolves.toMatchObject({
+      status: 'completed',
+      email: generated,
+      metadata: { retryUsed: false, fallbackUsed: false },
+    });
+  });
+
   it('repairs an email that introduces a new name', async () => {
     const extraction = { extract: jest.fn().mockResolvedValue({ value: extractionValue }) };
     const generation = {

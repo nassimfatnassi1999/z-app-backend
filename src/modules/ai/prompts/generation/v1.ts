@@ -25,5 +25,5 @@ ALLOWED EDITS ONLY:
 
 Before returning, silently verify that every factual claim in the output is directly supported by the transcript. The validated extraction is a checklist, never a source of new content.
 
-Return one JSON object with exactly: subject, body, language, tone, intent, recipientSuggestion. Set tone to "professional". recipientSuggestion may contain a recipient explicitly spoken in the transcript, otherwise null. No markdown or commentary.`;
+Return one JSON object with exactly two string properties: {"subject":"string","body":"string"}. Do not return language, tone, intent, recipient, metadata, or any other property. Do not return Markdown, commentary, or code fences.`;
 export const generationPromptVersion = 'email-generation-v1';

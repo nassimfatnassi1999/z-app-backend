@@ -27,8 +27,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const exceptionResponse = exception.getResponse();
       if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
         const res = exceptionResponse as any;
-        message = Array.isArray(res.message) ? res.message.join(', ') : res.message;
-        error = res.error || exception.message;
+        const structuredError = res.error && typeof res.error === 'object' ? res.error : undefined;
+        message = Array.isArray(res.message)
+          ? res.message.join(', ')
+          : res.message || structuredError?.message || exception.message;
+        error = structuredError || res.error || exception.message;
         extra = Object.fromEntries(
           Object.entries(res).filter(([key]) => !['statusCode', 'message', 'error'].includes(key)),
         );

@@ -34,7 +34,7 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id', 'Idempotency-Key'],
   });
   app.setGlobalPrefix('api/v1');
   app.use((_request: Request, response: Response, next: NextFunction) => {

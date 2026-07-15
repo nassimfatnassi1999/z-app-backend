@@ -39,6 +39,13 @@ export const generatedEmailSchema = z
   })
   .strict();
 
+export const generatedEmailContentSchema = z
+  .object({
+    subject: z.string().trim().min(2).max(160),
+    body: z.string().trim().min(10).max(50_000),
+  })
+  .strict();
+
 export const emailValidationSchema = z
   .object({
     supportedFacts: z.boolean(),
@@ -53,5 +60,6 @@ export const emailValidationSchema = z
   .strict();
 
 export type TranscriptExtraction = z.infer<typeof transcriptExtractionSchema>;
+export type GeneratedEmailContent = z.infer<typeof generatedEmailContentSchema>;
 export type GeneratedEmail = z.infer<typeof generatedEmailSchema>;
 export type EmailValidation = z.infer<typeof emailValidationSchema>;
