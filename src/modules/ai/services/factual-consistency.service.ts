@@ -336,6 +336,13 @@ export class FactualConsistencyService {
       seenUnsupported.add(key);
       unsupported.push({ kind, value });
     };
+    const forceUnsupported = (kind: ProtectedFactKind, rawValue: string) => {
+      const value = rawValue.trim();
+      const key = `${kind}:${this.normalize(value)}`;
+      if (!value || seenUnsupported.has(key)) return;
+      seenUnsupported.add(key);
+      unsupported.push({ kind, value });
+    };
     const addMissing = (kind: ProtectedFactKind, rawValue: string) => {
       const value = rawValue.trim();
       const normalized = this.normalize(value);
@@ -419,6 +426,24 @@ export class FactualConsistencyService {
       for (const date of extraction.dates) addMissing('date', date);
       for (const amount of extraction.amounts) addMissing('number', amount);
       for (const keyword of extraction.keywords) addMissing('keyword', keyword);
+      for (const correction of extraction.transcriptionCorrections) {
+        const sourceTerm = this.normalize(correction.source);
+        const correctedTerm = this.normalize(correction.corrected);
+        if (
+          source.includes(sourceTerm) &&
+          !this.containsTerm(normalizedOutput, correctedTerm) &&
+          !this.containsTerm(normalizedOutput, sourceTerm)
+        ) {
+          forceMissing('keyword', correction.corrected);
+        }
+        if (
+          sourceTerm !== correctedTerm &&
+          this.containsTerm(normalizedOutput, sourceTerm) &&
+          !this.containsTerm(normalizedOutput, correctedTerm)
+        ) {
+          forceUnsupported('keyword', correction.source);
+        }
+      }
 
       const language = extraction.language.toLocaleLowerCase().split('-')[0];
       for (const [label, markersByLanguage] of Object.entries(this.semanticMarkers)) {

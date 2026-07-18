@@ -8,6 +8,12 @@ const extractedLabel = (fallback: string, maximum: number) =>
     (value) => (value === null || value === '' ? fallback : value),
     z.string().trim().min(1).max(maximum),
   );
+const transcriptionCorrection = z
+  .object({
+    source: z.string().trim().min(1).max(200),
+    corrected: z.string().trim().min(1).max(200),
+  })
+  .strict();
 
 export const transcriptExtractionSchema = z
   .object({
@@ -21,6 +27,7 @@ export const transcriptExtractionSchema = z
     amounts: extractedList(20),
     names: extractedList(30),
     keywords: extractedList(30),
+    transcriptionCorrections: z.array(transcriptionCorrection).max(20),
     tone: extractedLabel('professional', 40),
     ambiguities: extractedList(10),
     needsClarification: z.boolean(),

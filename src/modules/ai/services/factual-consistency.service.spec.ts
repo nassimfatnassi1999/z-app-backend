@@ -86,6 +86,7 @@ describe('FactualConsistencyService', () => {
         amounts: ['250 euros'],
         names: ['Achref', 'Atlas'],
         keywords: ['budget Atlas'],
+        transcriptionCorrections: [],
         tone: 'professional',
         ambiguities: [],
         needsClarification: false,
@@ -117,6 +118,7 @@ describe('FactualConsistencyService', () => {
       amounts: [],
       names: ['Achref'],
       keywords: ['application'],
+      transcriptionCorrections: [],
       tone: 'professional',
       ambiguities: [],
       needsClarification: false,
@@ -211,5 +213,46 @@ describe('FactualConsistencyService', () => {
       confidence: 0.98,
     });
     expect(result.pass).toBe(true);
+  });
+
+  it('requires a declared STT correction and rejects the recognized error in the email', () => {
+    const extraction = {
+      language: 'fr',
+      intent: 'inform',
+      recipient: null,
+      facts: ['Ajout d’une corbeille lors de la sélection de plusieurs emails'],
+      constraints: [],
+      requestedActions: [],
+      dates: [],
+      amounts: [],
+      names: [],
+      keywords: ['corbeille', 'sélection de plusieurs emails'],
+      transcriptionCorrections: [{ source: 'concordelle', corrected: 'corbeille' }],
+      tone: 'professional',
+      ambiguities: [],
+      needsClarification: false,
+      clarificationQuestions: [],
+    };
+    const transcript = "J'ai ajouté une concordelle quand on sélectionner plusieurs emails.";
+    const corrected = service.audit(
+      transcript,
+      email(
+        'Sélection multiple des emails',
+        "Bonjour,\n\nJ'ai ajouté une corbeille lorsque plusieurs emails sont sélectionnés.\n\nCordialement,",
+      ),
+      extraction,
+    );
+    const uncorrected = service.audit(
+      transcript,
+      email(
+        'Sélection multiple des emails',
+        "Bonjour,\n\nJ'ai ajouté une concordelle lorsque plusieurs emails sont sélectionnés.\n\nCordialement,",
+      ),
+      extraction,
+    );
+
+    expect(corrected.pass).toBe(true);
+    expect(uncorrected.pass).toBe(false);
+    expect(uncorrected.unsupported).toContainEqual({ kind: 'keyword', value: 'concordelle' });
   });
 });

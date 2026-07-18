@@ -12,6 +12,7 @@ const extractionValue = {
   amounts: [],
   names: ['Ahmed'],
   keywords: [],
+  transcriptionCorrections: [],
   tone: 'professional',
   ambiguities: [],
   needsClarification: false,

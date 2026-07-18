@@ -11,6 +11,7 @@ const extraction = {
   amounts: [],
   names: [],
   keywords: ['rendez-vous', 'annulé', 'confirmer'],
+  transcriptionCorrections: [],
   tone: 'professional',
   ambiguities: [],
   needsClarification: false,

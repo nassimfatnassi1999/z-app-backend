@@ -11,6 +11,7 @@ const extracted = {
   amounts: [],
   names: [],
   keywords: ['rendez-vous'],
+  transcriptionCorrections: [],
   tone: 'professional',
   ambiguities: [],
   needsClarification: false,

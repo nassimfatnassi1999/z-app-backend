@@ -12,6 +12,7 @@ const extraction = {
   amounts: [],
   names: ['Achref'],
   keywords: ['application', 'bugs', 'génération des emails'],
+  transcriptionCorrections: [],
   tone: 'professional',
   ambiguities: [],
   needsClarification: false,

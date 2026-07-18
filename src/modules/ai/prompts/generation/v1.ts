@@ -13,10 +13,12 @@ NON-NEGOTIABLE RULES:
 - Never remove, weaken, or reverse a factual element, intention, constraint, or negation.
 - Never remove explicit gratitude, apology, uncertainty, refusal, or degree of commitment. A thought, estimate, or possibility must not become a promise or certainty.
 - Preserve every explicit name, number, date, time, amount, address, person, company, reason, request, and factual detail.
+- Preserve every distinct action, request, modification, and feature; when several are spoken, include all of them.
 - If information is missing, leave it missing.
 - Use exactly the manually selected language when input.language is a supported ISO code. In automatic mode, keep the detected transcript language. Never silently default to English.
 - Never translate the user's factual content. A manual language selection is an explicit instruction for the email output language.
-- Preserve every extraction keyword lexically; it may be inflected only when grammar in the same language requires it.
+- Apply only the high-confidence STT corrections listed in extraction.transcriptionCorrections. Treat each corrected term as the user's original intended word, not as new content. Never copy a known erroneous source form into the email.
+- Preserve every corrected extraction keyword lexically; it may be inflected only when grammar in the same language requires it.
 
 ALLOWED EDITS ONLY:
 - Correct grammar, spelling, and punctuation.
@@ -24,6 +26,7 @@ ALLOWED EDITS ONLY:
 - Reorder phrases for clarity.
 - Improve flow, transitions, clarity, politeness, and professional readability without adding substantive content.
 - Build logical paragraphs instead of returning a transcript-like block.
+- Keep the email at the transcript's information density. Do not shorten a detailed transcript or merge distinct features into a vague summary.
 - Add a brief conventional greeting appropriate to the detected language. Use the explicit recipient when available; otherwise use a neutral greeting that introduces no identity or fact.
 - Add a brief conventional sign-off appropriate to the detected language. It must not introduce a sender name, promise, request, or factual claim.
 - Create a short subject supported only by words and facts in the transcript. Use the detected language's neutral equivalent of "Message" if no faithful subject can be formed.
@@ -41,9 +44,9 @@ CONVENTIONAL SCAFFOLDING:
 - Do not add phrases such as "I hope you are well", "Do not hesitate to contact me", "Let me know if you need anything", or equivalents unless the user explicitly said them.
 - Do not turn information into a request, promise, deadline, or commitment.
 
-Before returning, silently verify that every factual claim in the output is directly supported by the transcript. The validated extraction is a checklist, never a source of new content.
+Before returning, silently verify that every factual claim in the output is directly supported by the transcript, allowing only the explicit lexical substitutions in extraction.transcriptionCorrections. Verify that no feature, action, request, or important detail was lost. If any check fails, regenerate internally once before returning. The validated extraction is a checklist, never a source of new content.
 
 Return one JSON object with exactly this shape:
 {"language":"fr","subject":"string","recipient":"string","body":"string","confidence":0.98}
 language is the selected ISO-639-1 language in manual mode, otherwise the detected language. recipient is the explicitly spoken recipient or an empty string. confidence is a number from 0 to 1 reflecting fidelity to the transcript. Do not return any other property. Do not return Markdown, commentary, or code fences.`;
-export const generationPromptVersion = 'email-generation-v2';
+export const generationPromptVersion = 'email-generation-v3';

@@ -54,16 +54,27 @@ export class EmailValidationService {
     const value = result.value;
     const normalizedTranscript = this.normalize(transcript);
     const normalizedEmail = this.normalize([email.subject, email.body, email.recipient].join('\n'));
+    const correctedTerms = extraction.transcriptionCorrections.map(({ corrected }) =>
+      this.normalize(corrected),
+    );
     const unsupportedClaims = value.unsupportedClaims.filter((claim) => {
       const normalizedClaim = this.normalizeClaim(claim);
       return (
         !normalizedTranscript.includes(normalizedClaim) &&
+        !correctedTerms.some(
+          (term) => term.includes(normalizedClaim) || normalizedClaim.includes(term),
+        ) &&
         !this.neutralScaffolding.has(normalizedClaim)
       );
     });
-    const missingFacts = value.missingFacts.filter(
-      (fact) => !normalizedEmail.includes(this.normalizeClaim(fact)),
-    );
+    const missingFacts = value.missingFacts.filter((fact) => {
+      const normalizedFact = this.normalizeClaim(fact);
+      if (normalizedEmail.includes(normalizedFact)) return false;
+      const correction = extraction.transcriptionCorrections.find(
+        ({ source }) => this.normalize(source) === normalizedFact,
+      );
+      return !correction || !normalizedEmail.includes(this.normalize(correction.corrected));
+    });
     const pass =
       value.supportedFacts &&
       value.negationPreserved &&

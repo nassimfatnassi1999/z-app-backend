@@ -11,6 +11,7 @@ const extraction = {
   amounts: [],
   names: ['Achref'],
   keywords: ['application'],
+  transcriptionCorrections: [],
   tone: 'professional',
   ambiguities: [],
   needsClarification: false,
@@ -62,5 +63,35 @@ describe('EmailValidationService', () => {
       unsupportedClaims: ['Le rendez-vous de vendredi est confirmé'],
       pass: false,
     });
+  });
+
+  it('accepts a declared contextual STT correction as source-supported', async () => {
+    const complete = jest.fn().mockResolvedValue({
+      model: 'test-model',
+      value: {
+        ...validation(['corbeille']),
+        missingFacts: ['concordelle'],
+      },
+    });
+    const service = new EmailValidationService({ complete } as never);
+    const correctedExtraction = {
+      ...extraction,
+      facts: ['Ajout d’une corbeille lors de la sélection de plusieurs emails'],
+      keywords: ['corbeille', 'sélection de plusieurs emails'],
+      transcriptionCorrections: [{ source: 'concordelle', corrected: 'corbeille' }],
+    };
+    const correctedEmail = {
+      ...email,
+      subject: "Mise à jour de l'application",
+      body: "Bonjour,\n\nJ'ai ajouté une corbeille lors de la sélection de plusieurs emails.\n\nCordialement",
+    };
+
+    await expect(
+      service.validate(
+        "J'ai ajouté une concordelle lors de la sélection de plusieurs emails.",
+        correctedExtraction,
+        correctedEmail,
+      ),
+    ).resolves.toMatchObject({ missingFacts: [], unsupportedClaims: [], pass: true });
   });
 });
