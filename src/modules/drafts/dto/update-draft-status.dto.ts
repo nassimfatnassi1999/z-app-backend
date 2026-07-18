@@ -1,8 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn } from 'class-validator';
+import { IsEnum } from 'class-validator';
+import { EmailStatus } from '../../../common/enums/email-status.enum';
 
 export class UpdateDraftStatusDto {
-  @ApiProperty({ enum: ['draft', 'scheduled', 'sent_internal', 'deleted'] })
-  @IsIn(['draft', 'scheduled', 'sent_internal', 'deleted'])
-  status!: 'draft' | 'scheduled' | 'sent_internal' | 'deleted';
+  @ApiProperty({ enum: EmailStatus })
+  @IsEnum(EmailStatus)
+  status!: EmailStatus;
 }

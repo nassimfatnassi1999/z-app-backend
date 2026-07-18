@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -15,6 +16,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SendEmailDto } from './dto/send-email.dto';
 import { MailboxService } from './mailbox.service';
+import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 
 type AuthRequest = Request & { user: { userId: string; email: string } };
 
@@ -23,7 +25,10 @@ type AuthRequest = Request & { user: { userId: string; email: string } };
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class MailboxController {
-  constructor(private readonly mailbox: MailboxService) {}
+  constructor(
+    private readonly mailbox: MailboxService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Get()
   list(
@@ -76,8 +81,14 @@ export class MailboxController {
   }
 
   @Post()
-  send(@Req() req: AuthRequest, @Body() dto: SendEmailDto) {
-    return this.mailbox.send(req.user.userId, dto);
+  send(
+    @Req() req: AuthRequest,
+    @Body() dto: SendEmailDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.idempotency.run(`mailbox:send:${req.user.userId}`, idempotencyKey, () =>
+      this.mailbox.send(req.user.userId, dto),
+    );
   }
 
   @Get(':id')

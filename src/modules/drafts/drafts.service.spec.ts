@@ -23,7 +23,7 @@ describe('DraftsService', () => {
     const result = await service.update({ userId: 'user-1' }, 'draft-1', dto);
 
     expect(emailDraft.findFirst).toHaveBeenCalledWith({
-      where: { id: 'draft-1', userId: 'user-1', status: 'draft' },
+      where: { id: 'draft-1', userId: 'user-1', status: 'DRAFT' },
     });
     expect(emailDraft.update).toHaveBeenCalledWith({
       where: { id: 'draft-1' },

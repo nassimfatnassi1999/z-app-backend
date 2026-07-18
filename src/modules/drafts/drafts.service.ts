@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDraftDto } from './dto/create-draft.dto';
+import { EmailStatus } from '../../common/enums/email-status.enum';
 
 type DraftOwner = { userId?: string; deviceId?: string };
-type DraftStatus = 'draft' | 'scheduled' | 'sent_internal' | 'deleted';
+type DraftStatus = EmailStatus;
 
 @Injectable()
 export class DraftsService {
@@ -17,14 +18,14 @@ export class DraftsService {
 
   list(owner: DraftOwner) {
     return this.prisma.emailDraft.findMany({
-      where: { ...this.ownerWhere(owner), status: 'draft' },
+      where: { ...this.ownerWhere(owner), status: EmailStatus.DRAFT },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   async update(owner: DraftOwner, id: string, dto: CreateDraftDto) {
     const draft = await this.prisma.emailDraft.findFirst({
-      where: { id, ...this.ownerWhere(owner), status: 'draft' },
+      where: { id, ...this.ownerWhere(owner), status: EmailStatus.DRAFT },
     });
     if (!draft) throw new NotFoundException('Draft not found');
     return this.prisma.emailDraft.update({
@@ -80,7 +81,7 @@ export class DraftsService {
         tone: draft.tone,
         transcript: draft.transcript,
         templateKey: draft.templateKey,
-        status: 'draft',
+        status: EmailStatus.DRAFT,
       },
     });
   }

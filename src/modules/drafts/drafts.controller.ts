@@ -17,6 +17,8 @@ import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { CreateDraftDto } from './dto/create-draft.dto';
 import { UpdateDraftStatusDto } from './dto/update-draft-status.dto';
 import { DraftsService } from './drafts.service';
+import { EmailStatus } from '../../common/enums/email-status.enum';
+import { IdempotencyService } from '../../common/idempotency/idempotency.service';
 
 type AuthRequest = Request & { user?: { userId: string; email: string } | null };
 type DraftOwner = { userId?: string; deviceId?: string };
@@ -26,15 +28,23 @@ type DraftOwner = { userId?: string; deviceId?: string };
 @UseGuards(OptionalJwtAuthGuard)
 @ApiBearerAuth()
 export class DraftsController {
-  constructor(private readonly drafts: DraftsService) {}
+  constructor(
+    private readonly drafts: DraftsService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   @Post()
   create(
     @Req() req: AuthRequest,
     @Headers('x-device-id') deviceId: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() dto: CreateDraftDto,
   ) {
-    return this.drafts.create(this.ownerFrom(req, deviceId), dto);
+    const owner = this.ownerFrom(req, deviceId);
+    const ownerKey = owner.userId ?? owner.deviceId;
+    return this.idempotency.run(`draft:create:${ownerKey}`, idempotencyKey, () =>
+      this.drafts.create(owner, dto),
+    );
   }
 
   @Post('claim-device-drafts')
@@ -85,7 +95,7 @@ export class DraftsController {
     @Headers('x-device-id') deviceId: string | undefined,
     @Param('id') id: string,
   ) {
-    return this.drafts.updateStatus(this.ownerFrom(req, deviceId), id, 'deleted');
+    return this.drafts.updateStatus(this.ownerFrom(req, deviceId), id, EmailStatus.TRASHED);
   }
 
   private ownerFrom(req: AuthRequest, rawDeviceId?: string): DraftOwner {

@@ -67,7 +67,7 @@ model Email {
   transcript       String?
   tone             String
   language         String
-  status           String    @default("sent")
+  status           String    @default("SENT")
   read             Boolean   @default(false)
   // Legacy shared flags kept during the compatibility migration. New code uses per-user state.
   deleted          Boolean   @default(false)
@@ -125,7 +125,7 @@ model EmailDraft {
   tone        String
   transcript  String
   templateKey String?
-  status      String   @default("draft")
+  status      String   @default("DRAFT")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

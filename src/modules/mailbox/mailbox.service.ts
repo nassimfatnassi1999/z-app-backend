@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SendEmailDto } from './dto/send-email.dto';
 import { MailboxEvents } from './mailbox.events';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailStatus } from '../../common/enums/email-status.enum';
 
 type MailboxFolder = 'inbox' | 'sent' | 'drafts' | 'trash' | 'favorites' | 'unread';
 
@@ -52,12 +53,23 @@ export class MailboxService {
     return emails.map((email) => this.serializeEmail(email, userId));
   }
 
+  listByStatus(userId: string, status: EmailStatus) {
+    switch (status) {
+      case EmailStatus.DRAFT:
+        return this.list(userId, 'drafts');
+      case EmailStatus.SENT:
+        return this.list(userId, 'sent');
+      case EmailStatus.TRASHED:
+        return this.list(userId, 'trash');
+    }
+  }
+
   async unreadCount(userId: string) {
     return {
       unread: await this.prisma.email.count({
         where: {
           recipientId: userId,
-          status: 'sent',
+          status: EmailStatus.SENT,
           read: false,
           recipientDeleted: false,
           recipientPurged: false,
@@ -71,13 +83,13 @@ export class MailboxService {
       this.prisma.email.count({
         where: {
           recipientId: userId,
-          status: 'sent',
+          status: EmailStatus.SENT,
           read: false,
           recipientDeleted: false,
           recipientPurged: false,
         },
       }),
-      this.prisma.emailDraft.count({ where: { userId, status: 'draft' } }),
+      this.prisma.emailDraft.count({ where: { userId, status: EmailStatus.DRAFT } }),
       this.prisma.email.count({
         where: {
           OR: [
@@ -111,7 +123,7 @@ export class MailboxService {
       let transcript: string | undefined;
       if (dto.draftId) {
         const draft = await tx.emailDraft.findFirst({
-          where: { id: dto.draftId, userId, status: 'draft' },
+          where: { id: dto.draftId, userId, status: EmailStatus.DRAFT },
         });
         if (!draft) throw new NotFoundException('Draft not found');
         transcript = draft.transcript;
@@ -125,7 +137,7 @@ export class MailboxService {
           tone: dto.tone || 'professional',
           language: dto.language || 'unknown',
           transcript,
-          status: 'sent',
+          status: EmailStatus.SENT,
           sentAt: new Date(),
           replyToEmailId: replyTo?.id,
           threadId: replyTo ? replyTo.threadId || replyTo.id : undefined,
@@ -135,7 +147,7 @@ export class MailboxService {
       if (dto.draftId) {
         await tx.emailDraft.update({
           where: { id: dto.draftId },
-          data: { status: 'sent_internal' },
+          data: { status: EmailStatus.SENT },
         });
       }
       return created;
@@ -203,6 +215,52 @@ export class MailboxService {
     return this.serializeEmail(updated, userId);
   }
 
+  async deleteBatch(userId: string, emailIds: string[]) {
+    const ids = [...new Set(emailIds)];
+    const [emails, drafts] = await Promise.all([
+      this.prisma.email.findMany({
+        where: {
+          id: { in: ids },
+          OR: [
+            { senderId: userId, senderPurged: false },
+            { recipientId: userId, recipientPurged: false },
+          ],
+        },
+        select: { id: true, senderId: true },
+      }),
+      this.prisma.emailDraft.findMany({
+        where: { id: { in: ids }, userId, status: EmailStatus.DRAFT },
+        select: { id: true },
+      }),
+    ]);
+    const ownedIds = new Set([
+      ...emails.map((email) => email.id),
+      ...drafts.map((draft) => draft.id),
+    ]);
+    if (ownedIds.size !== ids.length || ids.some((id) => !ownedIds.has(id))) {
+      throw new ForbiddenException('You do not own all requested emails');
+    }
+
+    await this.prisma.$transaction([
+      ...emails.map((email) =>
+        this.prisma.email.update({
+          where: { id: email.id },
+          data: email.senderId === userId ? { senderDeleted: true } : { recipientDeleted: true },
+        }),
+      ),
+      ...(drafts.length
+        ? [
+            this.prisma.emailDraft.updateMany({
+              where: { id: { in: drafts.map((draft) => draft.id) }, userId },
+              data: { status: EmailStatus.TRASHED },
+            }),
+          ]
+        : []),
+    ]);
+    ids.forEach((id) => this.events.emitToUser(userId, 'email:deleted', { id }));
+    return { deleted: ids.length, emailIds: ids };
+  }
+
   async restore(userId: string, id: string) {
     const email = await this.findVisibleEmail(userId, id);
     const updated = await this.prisma.email.update({
@@ -262,7 +320,7 @@ export class MailboxService {
     const drafts = await this.prisma.emailDraft.findMany({
       where: {
         userId,
-        status: 'draft',
+        status: EmailStatus.DRAFT,
         ...(query
           ? {
               OR: [
@@ -301,7 +359,12 @@ export class MailboxService {
   private folderWhere(userId: string, folder: MailboxFolder) {
     switch (folder) {
       case 'sent':
-        return { senderId: userId, status: 'sent', senderDeleted: false, senderPurged: false };
+        return {
+          senderId: userId,
+          status: EmailStatus.SENT,
+          senderDeleted: false,
+          senderPurged: false,
+        };
       case 'trash':
         return {
           OR: [
@@ -329,7 +392,7 @@ export class MailboxService {
       case 'unread':
         return {
           recipientId: userId,
-          status: 'sent',
+          status: EmailStatus.SENT,
           read: false,
           recipientDeleted: false,
           recipientPurged: false,
@@ -338,7 +401,7 @@ export class MailboxService {
       default:
         return {
           recipientId: userId,
-          status: 'sent',
+          status: EmailStatus.SENT,
           recipientDeleted: false,
           recipientPurged: false,
         };
@@ -375,8 +438,14 @@ export class MailboxService {
       body: email.body,
       tone: email.tone,
       language: email.language,
-      status: email.status,
-      draft: email.status === 'draft',
+      status: isSender
+        ? email.senderDeleted
+          ? EmailStatus.TRASHED
+          : email.status
+        : email.recipientDeleted
+          ? EmailStatus.TRASHED
+          : email.status,
+      draft: email.status === EmailStatus.DRAFT,
       read: email.read,
       deleted: isSender ? email.senderDeleted : email.recipientDeleted,
       starred: isSender ? email.senderStarred : email.recipientStarred,

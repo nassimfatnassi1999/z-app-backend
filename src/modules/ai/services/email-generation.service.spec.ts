@@ -26,7 +26,7 @@ describe('EmailGenerationService', () => {
         language: 'en',
         subject: "Avancement des modifications de l'application",
         recipient: 'Someone else',
-        body: "Bonjour Achref,\n\nDes bugs subsistent dans la génération des emails. Je pense terminer demain matin.\n\nCordialement,",
+        body: 'Bonjour Achref,\n\nDes bugs subsistent dans la génération des emails. Je pense terminer demain matin.\n\nCordialement,',
         confidence: 0.91,
       },
     });

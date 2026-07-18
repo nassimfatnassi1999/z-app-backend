@@ -7,10 +7,12 @@ import { MailboxEvents } from './mailbox.events';
 import { MailboxGateway } from './mailbox.gateway';
 import { MailboxService } from './mailbox.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { IdempotencyService } from '../../common/idempotency/idempotency.service';
+import { EmailsController } from './emails.controller';
 
 @Module({
   imports: [PrismaModule, JwtModule.register({}), ConfigModule, NotificationsModule],
-  controllers: [MailboxController],
-  providers: [MailboxService, MailboxGateway, MailboxEvents],
+  controllers: [MailboxController, EmailsController],
+  providers: [MailboxService, MailboxGateway, MailboxEvents, IdempotencyService],
 })
 export class MailboxModule {}
