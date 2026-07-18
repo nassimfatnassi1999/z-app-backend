@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDraftDto } from './dto/create-draft.dto';
 import { EmailStatus } from '../../common/enums/email-status.enum';
+import { Prisma } from '@prisma/client';
 
 type DraftOwner = { userId?: string; deviceId?: string };
 type DraftStatus = EmailStatus;
@@ -12,7 +13,11 @@ export class DraftsService {
 
   create(owner: DraftOwner, dto: CreateDraftDto) {
     return this.prisma.emailDraft.create({
-      data: { ...dto, ...owner },
+      data: {
+        ...dto,
+        ...owner,
+        ...(dto.attachments == null ? {} : { attachments: this.attachmentsInput(dto.attachments) }),
+      } as Prisma.EmailDraftUncheckedCreateInput,
     });
   }
 
@@ -30,7 +35,10 @@ export class DraftsService {
     if (!draft) throw new NotFoundException('Draft not found');
     return this.prisma.emailDraft.update({
       where: { id },
-      data: dto,
+      data: {
+        ...dto,
+        ...(dto.attachments == null ? {} : { attachments: this.attachmentsInput(dto.attachments) }),
+      } as Prisma.EmailDraftUncheckedUpdateInput,
     });
   }
 
@@ -81,6 +89,7 @@ export class DraftsService {
         tone: draft.tone,
         transcript: draft.transcript,
         templateKey: draft.templateKey,
+        attachments: this.attachmentsInput(draft.attachments),
         status: EmailStatus.DRAFT,
       },
     });
@@ -88,5 +97,9 @@ export class DraftsService {
 
   private ownerWhere(owner: DraftOwner) {
     return owner.userId ? { userId: owner.userId } : { deviceId: owner.deviceId };
+  }
+
+  private attachmentsInput(value: unknown): Prisma.InputJsonValue {
+    return JSON.parse(JSON.stringify(value ?? [])) as Prisma.InputJsonValue;
   }
 }

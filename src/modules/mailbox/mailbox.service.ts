@@ -9,6 +9,7 @@ import { SendEmailDto } from './dto/send-email.dto';
 import { MailboxEvents } from './mailbox.events';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailStatus } from '../../common/enums/email-status.enum';
+import { Prisma } from '@prisma/client';
 
 type MailboxFolder = 'inbox' | 'sent' | 'drafts' | 'trash' | 'favorites' | 'unread';
 
@@ -141,6 +142,7 @@ export class MailboxService {
           sentAt: new Date(),
           replyToEmailId: replyTo?.id,
           threadId: replyTo ? replyTo.threadId || replyTo.id : undefined,
+          attachments: JSON.parse(JSON.stringify(dto.attachments || [])) as Prisma.InputJsonValue,
         },
         include: this.emailInclude(),
       });
@@ -455,6 +457,7 @@ export class MailboxService {
       sentAt: email.sentAt,
       replyToEmailId: email.replyToEmailId,
       threadId: email.threadId || email.id,
+      attachments: email.attachments || [],
       sender: this.serializeUser(email.sender),
       recipient: this.serializeUser(email.recipient),
       preview: email.body.slice(0, 140),

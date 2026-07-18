@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { EmailAttachmentDto } from '../../mailbox/dto/send-email.dto';
 
 export class CreateDraftDto {
   @ApiPropertyOptional()
@@ -34,4 +43,11 @@ export class CreateDraftDto {
   @IsOptional()
   @IsString()
   templateKey?: string;
+
+  @ApiPropertyOptional({ type: [EmailAttachmentDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EmailAttachmentDto)
+  attachments?: EmailAttachmentDto[];
 }
