@@ -10,7 +10,12 @@ import { EmailValidationService } from './services/email-validation.service';
 import { EmailRepairService } from './services/email-repair.service';
 import { AiOrchestratorService } from './services/ai-orchestrator.service';
 import { FactualConsistencyService } from './services/factual-consistency.service';
-import { TranscriptCleanerService } from './services/transcript-cleaner.service';
+import { AiResponseParserService } from './services/ai-response-parser.service';
+import { AiProviderRouterService } from './services/ai-provider-router.service';
+import { InMemoryRoundRobinCounter } from './services/round-robin-counter.service';
+import { GroqEmailAiProvider } from './providers/groq-email-ai.provider';
+import { GeminiEmailAiProvider } from './providers/gemini-email-ai.provider';
+import { OpenRouterEmailAiProvider } from './providers/openrouter-email-ai.provider';
 
 @Module({
   controllers: [AiController, AiPipelineController],
@@ -24,7 +29,12 @@ import { TranscriptCleanerService } from './services/transcript-cleaner.service'
     EmailRepairService,
     AiOrchestratorService,
     FactualConsistencyService,
-    TranscriptCleanerService,
+    AiResponseParserService,
+    GroqEmailAiProvider,
+    GeminiEmailAiProvider,
+    OpenRouterEmailAiProvider,
+    InMemoryRoundRobinCounter,
+    AiProviderRouterService,
   ],
   exports: [AiService, AiOrchestratorService, IdempotencyService],
 })

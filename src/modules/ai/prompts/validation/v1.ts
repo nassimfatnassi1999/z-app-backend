@@ -1,17 +1,8 @@
-import type { PromptDefinition } from '../registry';
+export const validationPromptV1 = `Audit the email against the voice transcript, which is the only source of truth. The only permitted lexical differences are the source -> corrected substitutions explicitly listed in extraction.transcriptionCorrections; treat each corrected term as supported and do not demand that its erroneous source form appear in the email. Reject any other unsupported claim, implication, specificity, thanks, apology, person, company, project, client, date, time, number, amount, address, place, deadline, reason, promise, meeting, offer, availability, request, question, or action. Also reject any omitted fact, keyword, feature, explicit gratitude, apology, uncertainty, refusal, changed degree of commitment, changed name/date/number/quantity, weakened constraint, changed request, reversed negation, translation, excessive summarization, or meaning drift.
 
-export const emailValidationPrompt: PromptDefinition = {
-  id: 'email-validation',
-  version: '2.0.0',
-  language: 'multi',
-  template: `Audit the generated email against the structured analysis and correctedTranscript, the only sources of truth.
+A brief conventional greeting, subject, transition, and sign-off in the transcript language are allowed only when they carry no factual claim, identity, promise, offer, or new request. Never report those neutral structural elements as unsupportedClaims. The body must contain a greeting on its own line, the complete message in logical paragraphs, and a neutral sign-off on its own line, separated by blank lines. The extraction is a checklist of transcript content and cannot justify anything absent from the transcript. The email must sound natural, professional, concise, modern, and human rather than robotic or generic.
 
-Check subject/body presence, language consistency, proportional length, preservation of dates, times, numbers, amounts, quantities, proper names, products, actions, constraints and negations; absence of invented claims; tone and greeting/sign-off fit for the recipient; no repetition, robotic phrasing, assistant commentary or meta-content. A neutral greeting and sign-off are allowed scaffolding, but may not introduce a fact, promise, offer, request or identity.
-
-Score completeness, factualConsistency, toneFit, fluency and professionalism from 0 to 1. overall is their arithmetic mean. pass may be true only when there are no missing facts or unsupported claims, all boolean checks pass, and overall >= 0.82.
-
-Return only strict JSON with exactly: supportedFacts, missingFacts, unsupportedClaims, negationPreserved, languageMatch, toneMatch, actionClear, greetingAndClosingFit, noRepetition, noRoboticOrMetaContent, qualityScore {completeness,factualConsistency,toneFit,fluency,professionalism,overall}, validationWarnings, pass. No Markdown or reasoning.`,
-};
-
-export const validationPromptV1 = emailValidationPrompt;
-export const validationPromptVersion = `${emailValidationPrompt.id}@${emailValidationPrompt.version}`;
+Return one JSON object with exactly this typed shape:
+{"supportedFacts":true,"missingFacts":[],"unsupportedClaims":[],"negationPreserved":true,"languageMatch":true,"toneMatch":true,"actionClear":true,"pass":true}
+supportedFacts, negationPreserved, languageMatch, toneMatch, actionClear, and pass MUST each be a JSON boolean, never an array or string. missingFacts and unsupportedClaims MUST each be an array of strings. pass may be true only when every transcript fact, keyword, request, constraint, negation, name, date, time, number, and quantity is preserved; no unsupported content exists; the language and professional tone match; every boolean check passes; and both issue arrays are empty. Do not return Markdown, commentary, code fences, or additional properties.`;
+export const validationPromptVersion = 'email-validation-v3';

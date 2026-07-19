@@ -9,10 +9,11 @@ Create it from the documented template:
 cp deploy/.env.prod.example deploy/.env
 ```
 
-Configure at least the database, JWT, email-code, Deepgram, Groq and mail
-credentials. Never commit or print this file. `GROQ_BASE_URL`, all three Groq
-model variables, `AI_REQUEST_TIMEOUT_MS` and `AI_MAX_REPAIR_ATTEMPTS` are
-mandatory.
+Configure at least the database, JWT, email-code, Deepgram, one AI provider and
+mail credentials. Never commit or print this file. The provider order, timeout,
+maximum attempts and circuit-breaker settings are documented in the template.
+Gemini and OpenRouter remain optional; a provider is enabled only when both its
+API key and model are configured.
 
 For compatibility, an existing `deploy/.env.prod` is still accepted when
 `deploy/.env` is absent. The deploy path never reads `.env.example` and never

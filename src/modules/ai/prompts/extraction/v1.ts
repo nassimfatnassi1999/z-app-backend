@@ -1,24 +1,18 @@
-import type { PromptDefinition } from '../registry';
+export const extractionPromptV1 = `You are a lossless information extractor for a professional email rewriting pipeline. The voice transcript is the only source of truth.
 
-export const emailAnalysisPrompt: PromptDefinition = {
-  id: 'email-analysis',
-  version: '2.0.0',
-  language: 'multi',
-  template: `You are the analysis stage of Z AI Email Composer. Analyze the corrected voice transcript; do not write an email.
+First analyze the complete transcript and identify its subject, objective, explicit recipient, actions, features, requests, and context. Extract only information explicitly present. Never infer, complete, translate, summarize away, or invent anything. Preserve negations, names, dates, times, numbers, quantities, amounts, addresses, people, companies, requests, obligations, intentions, and constraints exactly.
 
-The transcript is the only source of truth. Detect its language, intent, recipient category, relationship, tone and proportional complexity. Extract every fact, date, time, amount, quantity, person, product, action and constraint. Preserve names, numbers, negations, uncertainty and commitments exactly. Do not infer a recipient or relationship from missing context: use unknown and a professional/neutral relationship. Never turn an ambiguity into a fact.
+The transcript comes from speech-to-text and may contain recognition errors, homophones, near-sounding words, missing punctuation, incomplete phrases, repetitions, and hesitations. Silently correct a transcription error only when the intended term is unambiguous from the global sentence context, logic, IT vocabulary, or business vocabulary. Examples include "concordelle" -> "corbeille", "suprimer" -> "supprimer", "envoye" -> "envoyer", "drop down" -> "menu déroulant", and, when the surrounding meaning supports it, "voice" -> "vocal" or "speech" -> "transcription vocale". Never use this permission to change the user's intention or replace a feature with another one. Never correct proper names, dates, numbers, amounts, or identifiers by guesswork. If confidence is insufficient, retain the source term and record the ambiguity.
 
-The input contains deterministic corrections already applied by TranscriptCleanerService. You may make another STT correction only when the full context makes it highly certain (confidence >= 0.90). Never guess proper names, identifiers, dates, numbers, amounts or product references. correctedTranscript must contain all and only the user's information. transcriptCorrections must include each additional correction as {"original","corrected","confidence","reason"}; do not repeat supplied corrections.
+transcriptionCorrections MUST list every contextual STT correction as {"source":"exact transcript text","corrected":"intended text"}. Use [] when none. A correction is lexical cleanup, not permission to add a fact.
 
-Use only these enums:
-emailIntent: request, information, apology, cancellation, complaint, follow_up, quotation, order, purchase, sale, leave_request, meeting, appointment, support, technical, thank_you, invitation, reminder, other.
-detectedRecipientType: manager, colleague, friend, client, prospect, supplier, hr, management, teacher, university, administration, partner, team, support, unknown.
-detectedRelationship: very_formal, formal, professional, business, semi_formal, friendly, casual.
-detectedTone: professional, respectful, friendly, warm, neutral, formal, urgent, empathetic, apologetic, grateful, persuasive, confident, supportive.
-emailComplexity: short, medium, detailed.
+facts MUST also record every explicit communicative detail that can change tone or commitment: gratitude, apology, uncertainty, hesitation about a commitment, promise, refusal, and negation. For example, preserve "Merci", "I am sorry", and "Je pense terminer" instead of treating them as removable filler.
 
-Return only one strict JSON object with exactly: detectedLanguage, correctedTranscript, emailIntent, detectedRecipientType, detectedRelationship, detectedTone, emailComplexity, recipient, keyFacts, dates, times, amounts, quantities, people, products, actions, constraints, ambiguities, transcriptCorrections. recipient is an explicit recipient name/address or null. All collection fields are arrays, never null. No Markdown, explanation or reasoning.`,
-};
+language MUST be the transcript language as a lowercase ISO-639-1 code when supported: fr, en, de, es, it, pt, nl, or tr. Never choose a different language because the requested email style is professional.
 
-export const extractionPromptV1 = emailAnalysisPrompt;
-export const extractionPromptVersion = `${emailAnalysisPrompt.id}@${emailAnalysisPrompt.version}`;
+keywords MUST contain all content-bearing words or short phrases whose lexical identity matters in the email: product/project names, application or business terms, issue names, features, domain vocabulary, and essential nouns. Use the corrected form from transcriptionCorrections for a confirmed STT error; otherwise copy the transcript form exactly. Exclude stopwords, speech fillers, generic verbs that may be professionally paraphrased, greetings, and closings.
+
+This pipeline never asks the user to choose a rewrite: always set needsClarification to false and clarificationQuestions to an empty array; record genuine ambiguity only in ambiguities.
+
+Return one JSON object with exactly: language, intent, recipient, facts, constraints, requestedActions, dates, amounts, names, keywords, transcriptionCorrections, tone, ambiguities, needsClarification, clarificationQuestions. Every collection field MUST be a JSON array; use [] when empty and NEVER null. intent MUST be a non-empty string; use "rewrite" when no narrower intent is explicit. recipient is the only field that may be null. Use "professional" for tone. No Markdown, commentary, or code fences.`;
+export const extractionPromptVersion = 'transcript-extraction-v3';

@@ -1,12 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { emailGenerationPrompt } from '../prompts/registry';
-import { GeneratedEmail, generatedEmailSchema, TranscriptExtraction } from '../schemas/ai.schemas';
-import { GroqJsonProvider } from '../providers/groq-json.provider';
-import { recipientStyleRules } from '../config/recipient-style-rules';
+import { GeneratedEmail, TranscriptExtraction } from '../schemas/ai.schemas';
+import { AiProviderRouterService } from './ai-provider-router.service';
 
 @Injectable()
 export class EmailGenerationService {
-  constructor(private readonly groq: GroqJsonProvider) {}
+  constructor(private readonly router: AiProviderRouterService) {}
 
   async generate(input: {
     transcript: string;
@@ -15,34 +13,15 @@ export class EmailGenerationService {
     language?: string;
     previousEmail?: string;
   }): Promise<{ value: GeneratedEmail; model: string }> {
-    const generated = await this.groq.complete({
-      kind: 'generation',
-      prompt: emailGenerationPrompt,
-      input: {
-        analysis: input.extraction,
-        correctedTranscript: input.extraction.correctedTranscript,
-        recipientStyleRules: recipientStyleRules[input.extraction.detectedRecipientType],
-        requestedTone: input.tone,
-        requestedLanguage: input.language,
-      },
-      schema: generatedEmailSchema,
-      temperature: 0.35,
-      topP: 0.7,
-      presencePenalty: 0,
-      frequencyPenalty: 0.1,
-    });
+    const generated = await this.router.generateEmail(input);
     return {
-      model: generated.model,
+      model: 'multi-provider',
       value: {
-        ...generated.value,
-        detectedLanguage: input.extraction.detectedLanguage,
-        detectedRecipientType: input.extraction.detectedRecipientType,
-        detectedRelationship: input.extraction.detectedRelationship,
-        detectedTone: input.extraction.detectedTone,
-        emailIntent: input.extraction.emailIntent,
-        emailComplexity: input.extraction.emailComplexity,
+        subject: generated.subject,
+        body: generated.body,
+        confidence: generated.confidence,
+        language: input.extraction.language,
         recipient: input.extraction.recipient ?? '',
-        validationWarnings: [],
       },
     };
   }

@@ -1,160 +1,71 @@
 import { z } from 'zod';
 
-const shortText = z.string().trim().min(1).max(500);
-const list = (maximum = 50) =>
-  z.preprocess((value) => (value == null ? [] : value), z.array(shortText).max(maximum));
-
-export const emailIntentSchema = z.enum([
-  'request',
-  'information',
-  'apology',
-  'cancellation',
-  'complaint',
-  'follow_up',
-  'quotation',
-  'order',
-  'purchase',
-  'sale',
-  'leave_request',
-  'meeting',
-  'appointment',
-  'support',
-  'technical',
-  'thank_you',
-  'invitation',
-  'reminder',
-  'other',
-]);
-
-export const recipientTypeSchema = z.enum([
-  'manager',
-  'colleague',
-  'friend',
-  'client',
-  'prospect',
-  'supplier',
-  'hr',
-  'management',
-  'teacher',
-  'university',
-  'administration',
-  'partner',
-  'team',
-  'support',
-  'unknown',
-]);
-
-export const relationshipSchema = z.enum([
-  'very_formal',
-  'formal',
-  'professional',
-  'business',
-  'semi_formal',
-  'friendly',
-  'casual',
-]);
-
-export const toneSchema = z.enum([
-  'professional',
-  'respectful',
-  'friendly',
-  'warm',
-  'neutral',
-  'formal',
-  'urgent',
-  'empathetic',
-  'apologetic',
-  'grateful',
-  'persuasive',
-  'confident',
-  'supportive',
-]);
-
-export const complexitySchema = z.enum(['short', 'medium', 'detailed']);
-
-export const transcriptCorrectionSchema = z
+const shortText = z.string().trim().max(500);
+const extractedList = (maximum: number) =>
+  z.preprocess((value) => (value === null ? [] : value), z.array(shortText).max(maximum));
+const extractedLabel = (fallback: string, maximum: number) =>
+  z.preprocess(
+    (value) => (value === null || value === '' ? fallback : value),
+    z.string().trim().min(1).max(maximum),
+  );
+const transcriptionCorrection = z
   .object({
-    original: z.string().trim().min(1).max(200),
+    source: z.string().trim().min(1).max(200),
     corrected: z.string().trim().min(1).max(200),
-    confidence: z.number().min(0).max(1),
-    reason: z.string().trim().min(1).max(300),
   })
   .strict();
 
-export const emailIntentAnalysisSchema = z
+export const transcriptExtractionSchema = z
   .object({
-    detectedLanguage: z.string().trim().min(2).max(12),
-    correctedTranscript: z.string().trim().min(3).max(20_000),
-    emailIntent: emailIntentSchema,
-    detectedRecipientType: recipientTypeSchema,
-    detectedRelationship: relationshipSchema,
-    detectedTone: toneSchema,
-    emailComplexity: complexitySchema,
+    language: z.string().trim().min(2).max(12),
+    intent: extractedLabel('rewrite', 80),
     recipient: z.string().trim().max(320).nullable(),
-    keyFacts: list(),
-    dates: list(20),
-    times: list(20),
-    amounts: list(20),
-    quantities: list(20),
-    people: list(30),
-    products: list(30),
-    actions: list(30),
-    constraints: list(30),
-    ambiguities: list(20),
-    transcriptCorrections: z.array(transcriptCorrectionSchema).max(20),
+    facts: extractedList(50),
+    constraints: extractedList(30),
+    requestedActions: extractedList(20),
+    dates: extractedList(20),
+    amounts: extractedList(20),
+    names: extractedList(30),
+    keywords: extractedList(30),
+    transcriptionCorrections: z.array(transcriptionCorrection).max(20),
+    tone: extractedLabel('professional', 40),
+    ambiguities: extractedList(10),
+    needsClarification: z.boolean(),
+    clarificationQuestions: extractedList(3),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.needsClarification && value.clarificationQuestions.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A clarification question is required',
+      });
+    }
+  });
 
 export const generatedEmailSchema = z
   .object({
+    language: z.string().trim().min(2).max(12),
     subject: z.string().trim().min(2).max(160),
-    body: z.string().trim().min(10).max(50_000),
-    detectedLanguage: z.string().trim().min(2).max(12),
-    detectedRecipientType: recipientTypeSchema,
-    detectedRelationship: relationshipSchema,
-    detectedTone: toneSchema,
-    emailIntent: emailIntentSchema,
-    emailComplexity: complexitySchema,
-    confidence: z.number().min(0).max(1),
-    validationWarnings: z.array(shortText).max(30),
-    // Kept for recipient prefill compatibility with existing mobile clients.
     recipient: z.string().trim().max(320),
-  })
-  .strict();
-
-export const emailQualityScoreSchema = z
-  .object({
-    completeness: z.number().min(0).max(1),
-    factualConsistency: z.number().min(0).max(1),
-    toneFit: z.number().min(0).max(1),
-    fluency: z.number().min(0).max(1),
-    professionalism: z.number().min(0).max(1),
-    overall: z.number().min(0).max(1),
+    body: z.string().trim().min(10).max(50_000),
+    confidence: z.number().min(0).max(1),
   })
   .strict();
 
 export const emailValidationSchema = z
   .object({
     supportedFacts: z.boolean(),
-    missingFacts: list(30),
-    unsupportedClaims: list(30),
+    missingFacts: z.array(shortText).max(30),
+    unsupportedClaims: z.array(shortText).max(30),
     negationPreserved: z.boolean(),
     languageMatch: z.boolean(),
     toneMatch: z.boolean(),
     actionClear: z.boolean(),
-    greetingAndClosingFit: z.boolean(),
-    noRepetition: z.boolean(),
-    noRoboticOrMetaContent: z.boolean(),
-    qualityScore: emailQualityScoreSchema,
-    validationWarnings: list(30),
     pass: z.boolean(),
   })
   .strict();
 
-// Compatibility name for internal callers and the existing /extract route.
-export const transcriptExtractionSchema = emailIntentAnalysisSchema;
-export type EmailIntentAnalysis = z.infer<typeof emailIntentAnalysisSchema>;
-export type TranscriptExtraction = EmailIntentAnalysis;
+export type TranscriptExtraction = z.infer<typeof transcriptExtractionSchema>;
 export type GeneratedEmail = z.infer<typeof generatedEmailSchema>;
-export type EmailQualityScore = z.infer<typeof emailQualityScoreSchema>;
 export type EmailValidation = z.infer<typeof emailValidationSchema>;

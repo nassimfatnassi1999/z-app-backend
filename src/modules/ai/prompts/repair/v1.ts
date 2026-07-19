@@ -1,15 +1,10 @@
-import type { PromptDefinition } from '../registry';
+export const repairPromptV1 = `Repair the professional email using the voice transcript as the only source of truth. This is the single allowed content-repair attempt.
 
-export const emailRepairPrompt: PromptDefinition = {
-  id: 'email-repair',
-  version: '2.0.0',
-  language: 'multi',
-  template: `Perform the single allowed targeted regeneration of an email. Use only correctedTranscript and the structured analysis.
+Remove every unsupported claim identified by validation. Restore every missing fact, keyword, feature, name, date, time, number, quantity, amount, request, constraint, and negation. Apply every high-confidence source -> corrected substitution in extraction.transcriptionCorrections, never restore the erroneous source spelling, and introduce no other lexical guess. Never infer or add people, companies, projects, clients, addresses, locations, deadlines, reasons, promises, meetings, excuses, thanks, offers, questions, availability, or actions.
 
-Fix every validation warning: restore missing facts and actions, remove unsupported claims, preserve numbers/dates/names/negations, correct language and recipient tone, improve structure, fluency, greeting and sign-off, and remove repetitions, robotic or meta-content. Do not introduce any new fact, promise, offer, request, identity or detail. Keep length proportional. For an unknown recipient, remain neutral and professional and never use informal second-person forms.
+Keep the transcript language. Never translate. Preserve corrected extraction keywords lexically. Preserve every distinct feature and action plus explicit gratitude, apology, uncertainty, refusal, and degree of commitment. Correct grammar, spelling, punctuation, paragraphing, order, transitions, and professional tone. Put a conventional greeting on its own line, the complete message in logical paragraphs, and a neutral sign-off on its own line without a sender name, separated by blank lines. These structural elements are required and must introduce no fact, identity, request, or promise. Avoid robotic filler and retain the transcript's information density.
 
-Return only one strict JSON object with exactly: subject, body, detectedLanguage, detectedRecipientType, detectedRelationship, detectedTone, emailIntent, emailComplexity, confidence, validationWarnings, recipient. Copy metadata from analysis and return validationWarnings as []. No Markdown, explanation or reasoning.`,
-};
-
-export const repairPromptV1 = emailRepairPrompt;
-export const repairPromptVersion = `${emailRepairPrompt.id}@${emailRepairPrompt.version}`;
+Return one JSON object with exactly this shape:
+{"language":"fr","subject":"string","recipient":"string","body":"string","confidence":0.95}
+recipient is the explicitly spoken recipient or an empty string. confidence is a number from 0 to 1. Do not return Markdown, commentary, code fences, metadata, or any other property.`;
+export const repairPromptVersion = 'email-repair-v3';

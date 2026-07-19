@@ -89,12 +89,23 @@ if [[ "$backend_state" == "running" ]]; then
   fi
   compose exec -T z_backend npx prisma migrate status >/dev/null 2>&1 && ok "Prisma" || fail "Prisma"
   compose exec -T z_backend sh -c 'test -n "$DEEPGRAM_API_KEY" && test -n "$DEEPGRAM_MODEL"' && ok "Deepgram configuration" || fail "Deepgram configuration"
-  compose exec -T z_backend sh -c 'test -n "$GROQ_API_KEY" && test -n "$GROQ_BASE_URL" && test -n "$GROQ_EMAIL_MODEL" && test -n "$GROQ_EXTRACTION_MODEL" && test -n "$GROQ_VALIDATION_MODEL"' && ok "Groq configuration" || fail "Groq configuration"
+  compose exec -T z_backend sh -c '
+    test -n "$AI_PROVIDER_ORDER" &&
+    test -n "$AI_PROVIDER_TIMEOUT_MS" &&
+    test -n "$AI_PROVIDER_MAX_ATTEMPTS" &&
+    test -n "$AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD" &&
+    test -n "$AI_CIRCUIT_BREAKER_COOLDOWN_MS" &&
+    {
+      { test -n "$GROQ_API_KEY" && test -n "$GROQ_MODEL"; } ||
+      { test -n "$GEMINI_API_KEY" && test -n "$GEMINI_MODEL"; } ||
+      { test -n "$OPENROUTER_API_KEY" && test -n "$OPENROUTER_MODEL"; }
+    }
+  ' && ok "AI provider configuration" || fail "AI provider configuration"
 else
   fail "Database network target"
   fail "Prisma"
   fail "Deepgram configuration"
-  fail "Groq configuration"
+  fail "AI provider configuration"
 fi
 
 host_port="$(grep -E '^BACKEND_HOST_PORT=' "$ENV_FILE" | tail -n 1 | cut -d= -f2-)"

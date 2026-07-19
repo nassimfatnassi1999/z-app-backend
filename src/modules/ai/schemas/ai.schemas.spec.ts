@@ -1,26 +1,54 @@
-import { emailIntentAnalysisSchema, generatedEmailSchema } from './ai.schemas';
-import { analysisFixture, emailFixture } from '../testing/ai-test.fixtures';
+import { generatedEmailSchema, transcriptExtractionSchema } from './ai.schemas';
+
+const extraction = {
+  language: 'fr',
+  intent: 'request',
+  recipient: null,
+  facts: ['Le rendez-vous est annulé'],
+  constraints: [],
+  requestedActions: ['Confirmer'],
+  dates: [],
+  amounts: [],
+  names: [],
+  keywords: ['rendez-vous', 'annulé', 'confirmer'],
+  transcriptionCorrections: [],
+  tone: 'professional',
+  ambiguities: [],
+  needsClarification: false,
+  clarificationQuestions: [],
+};
 
 describe('strict AI schemas', () => {
-  it('accepts the complete structured analysis', () => {
-    expect(emailIntentAnalysisSchema.parse(analysisFixture)).toEqual(analysisFixture);
-  });
-
-  it('rejects unknown or partial analysis properties', () => {
-    expect(() => emailIntentAnalysisSchema.parse({ ...analysisFixture, invented: true })).toThrow();
-    expect(() => emailIntentAnalysisSchema.parse({ detectedLanguage: 'fr' })).toThrow();
-  });
-
-  it('normalizes nullable extraction lists to empty arrays', () => {
-    expect(emailIntentAnalysisSchema.parse({ ...analysisFixture, amounts: null }).amounts).toEqual(
-      [],
-    );
-  });
-
-  it('accepts the public metadata-rich email contract and rejects partial JSON', () => {
-    expect(generatedEmailSchema.parse(emailFixture)).toEqual(emailFixture);
+  it('accepts a complete structured extraction', () =>
+    expect(transcriptExtractionSchema.parse(extraction)).toEqual(extraction));
+  it('rejects unknown properties', () =>
+    expect(() => transcriptExtractionSchema.parse({ ...extraction, invented: true })).toThrow());
+  it('requires a question when clarification is needed', () =>
     expect(() =>
-      generatedEmailSchema.parse({ subject: 'Objet', body: 'Corps incomplet.' }),
-    ).toThrow();
+      transcriptExtractionSchema.parse({ ...extraction, needsClarification: true }),
+    ).toThrow());
+  it('safely normalizes empty extraction values returned as null', () => {
+    expect(
+      transcriptExtractionSchema.parse({
+        ...extraction,
+        intent: null,
+        constraints: null,
+        amounts: null,
+        ambiguities: null,
+      }),
+    ).toMatchObject({ intent: 'rewrite', constraints: [], amounts: [], ambiguities: [] });
+  });
+  it('rejects incomplete generated emails', () =>
+    expect(() => generatedEmailSchema.parse({ subject: 'Objet' })).toThrow());
+  it('accepts exactly the public five-field email contract', () => {
+    const email = {
+      language: 'fr',
+      subject: 'Objet',
+      recipient: '',
+      body: 'Corps professionnel.',
+      confidence: 0.98,
+    };
+    expect(generatedEmailSchema.parse(email)).toEqual(email);
+    expect(() => generatedEmailSchema.parse({ ...email, tone: 'professional' })).toThrow();
   });
 });

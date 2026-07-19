@@ -32,16 +32,37 @@ export function validateEnvironment(config: Record<string, unknown>) {
   if (!String(config.DATABASE_URL ?? '').trim()) {
     throw new Error('DATABASE_URL is required');
   }
-  const aiRequired = [
-    'GROQ_API_KEY',
-    'GROQ_BASE_URL',
-    'GROQ_EMAIL_MODEL',
-    'GROQ_EXTRACTION_MODEL',
-    'GROQ_VALIDATION_MODEL',
-  ];
-  for (const name of aiRequired) {
-    if (!String(config[name] ?? '').trim()) throw new Error(`${name} is required`);
+  const supportedProviders = new Set(['groq', 'gemini', 'openrouter']);
+  const providerOrder = String(config.AI_PROVIDER_ORDER ?? 'groq,gemini,openrouter')
+    .split(',')
+    .map((provider) => provider.trim().toLowerCase())
+    .filter(Boolean);
+  if (
+    !providerOrder.length ||
+    providerOrder.some((provider) => !supportedProviders.has(provider))
+  ) {
+    throw new Error('AI_PROVIDER_ORDER must contain only groq, gemini and openrouter');
   }
+  const configuredProviders: Record<string, boolean> = {
+    groq: Boolean(
+      String(config.GROQ_API_KEY ?? '').trim() &&
+      String(config.GROQ_MODEL ?? config.GROQ_EMAIL_MODEL ?? '').trim(),
+    ),
+    gemini: Boolean(
+      String(config.GEMINI_API_KEY ?? '').trim() && String(config.GEMINI_MODEL ?? '').trim(),
+    ),
+    openrouter: Boolean(
+      String(config.OPENROUTER_API_KEY ?? '').trim() &&
+      String(config.OPENROUTER_MODEL ?? '').trim(),
+    ),
+  };
+  if (!providerOrder.some((provider) => configuredProviders[provider])) {
+    throw new Error('At least one AI provider and model must be configured');
+  }
+  validateInteger(config, 'AI_PROVIDER_TIMEOUT_MS', 30_000, 1_000, 120_000);
+  validateInteger(config, 'AI_PROVIDER_MAX_ATTEMPTS', 3, 1, 3);
+  validateInteger(config, 'AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD', 3, 1, 100);
+  validateInteger(config, 'AI_CIRCUIT_BREAKER_COOLDOWN_MS', 60_000, 1_000, 3_600_000);
   const timeout = Number(config.AI_REQUEST_TIMEOUT_MS);
   if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 120_000) {
     throw new Error('AI_REQUEST_TIMEOUT_MS must be between 1000 and 120000');
@@ -49,20 +70,21 @@ export function validateEnvironment(config: Record<string, unknown>) {
   if (String(config.AI_MAX_REPAIR_ATTEMPTS) !== '1') {
     throw new Error('AI_MAX_REPAIR_ATTEMPTS must be 1');
   }
-  const groqTimeout = Number(config.GROQ_TIMEOUT_MS ?? 30_000);
-  if (!Number.isInteger(groqTimeout) || groqTimeout < 1_000 || groqTimeout > 120_000) {
-    throw new Error('GROQ_TIMEOUT_MS must be between 1000 and 120000');
-  }
-  const maxTokens = Number(config.GROQ_MAX_TOKENS ?? 1200);
-  if (!Number.isInteger(maxTokens) || maxTokens < 256 || maxTokens > 8192) {
-    throw new Error('GROQ_MAX_TOKENS must be between 256 and 8192');
-  }
-  const temperature = Number(config.GROQ_TEMPERATURE ?? 0.35);
-  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 1) {
-    throw new Error('GROQ_TEMPERATURE must be between 0 and 1');
-  }
   if (config.NODE_ENV === 'production' && config.MAIL_ENABLED !== 'true') {
     throw new Error('MAIL_ENABLED must be true in production');
   }
   return config;
+}
+
+function validateInteger(
+  config: Record<string, unknown>,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+) {
+  const value = Number(config[name] ?? fallback);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
 }

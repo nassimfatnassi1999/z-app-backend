@@ -1,64 +1,127 @@
-import { analysisFixture, emailFixture, passingValidation } from '../testing/ai-test.fixtures';
 import { AiOrchestratorService } from './ai-orchestrator.service';
 import { FactualConsistencyService } from './factual-consistency.service';
 
-const createService = (validationValues = [passingValidation], repaired = emailFixture) => {
-  const repair = { repair: jest.fn().mockResolvedValue({ value: repaired }) };
-  const service = new AiOrchestratorService(
-    { extract: jest.fn().mockResolvedValue({ value: analysisFixture }) } as never,
-    {
-      generate: jest.fn().mockResolvedValue({ model: 'test-model', value: emailFixture }),
-    } as never,
-    {
-      validate: jest
-        .fn()
-        .mockImplementation(() => Promise.resolve(validationValues.shift() ?? passingValidation)),
-    } as never,
-    repair as never,
-    new FactualConsistencyService(),
-  );
-  return { service, repair };
+const extractionValue = {
+  language: 'fr',
+  intent: 'Informer',
+  recipient: 'Ahmed',
+  facts: ['Absent demain matin', 'Retour vers midi'],
+  constraints: [],
+  requestedActions: [],
+  dates: ['demain matin'],
+  amounts: [],
+  names: ['Ahmed'],
+  keywords: [],
+  transcriptionCorrections: [],
+  tone: 'professional',
+  ambiguities: [],
+  needsClarification: false,
+  clarificationQuestions: [],
+};
+
+const passingValidation = {
+  supportedFacts: true,
+  missingFacts: [],
+  unsupportedClaims: [],
+  negationPreserved: true,
+  languageMatch: true,
+  toneMatch: true,
+  actionClear: true,
+  pass: true,
 };
 
 describe('AiOrchestratorService', () => {
-  it('returns metadata and quality after analysis, generation and validation', async () => {
-    const { service } = createService();
+  it('returns a generated email when extraction, generation and validation succeed', async () => {
+    const generated = {
+      subject: 'Réunion',
+      body: 'Merci de confirmer la réunion de demain.',
+      language: 'fr',
+      recipient: 'Ahmed',
+      confidence: 0.84,
+    };
+    const service = new AiOrchestratorService(
+      { extract: jest.fn().mockResolvedValue({ value: extractionValue }) } as never,
+      {
+        generate: jest.fn().mockResolvedValue({ model: 'test-model', value: generated }),
+      } as never,
+      { validate: jest.fn().mockResolvedValue(passingValidation) } as never,
+      { repair: jest.fn() } as never,
+      new FactualConsistencyService(),
+    );
+
     await expect(
-      service.compose({ transcript: analysisFixture.correctedTranscript }),
+      service.compose({ transcript: 'Ahmed, merci de confirmer la réunion de demain.' }),
     ).resolves.toMatchObject({
       status: 'completed',
-      email: { detectedRecipientType: 'colleague', detectedTone: 'professional' },
-      metadata: { retryUsed: false, fallbackUsed: false, qualityScore: { overall: 0.95 } },
+      email: { ...generated, confidence: 0.98 },
+      metadata: { retryUsed: false, fallbackUsed: false },
     });
   });
 
-  it('performs exactly one targeted regeneration after a low score', async () => {
-    const low = {
-      ...passingValidation,
-      pass: false,
-      qualityScore: { ...passingValidation.qualityScore, overall: 0.7 },
-      validationWarnings: ['Ton trop formel'],
+  it('repairs an email that introduces a new name', async () => {
+    const extraction = { extract: jest.fn().mockResolvedValue({ value: extractionValue }) };
+    const generation = {
+      generate: jest.fn().mockResolvedValue({
+        model: 'test-model',
+        value: {
+          subject: 'Absence',
+          body: 'Bonjour Ahmed. Le projet Atlas continue. Je serai absent demain matin.',
+          language: 'fr',
+          recipient: 'Ahmed',
+          confidence: 0.7,
+        },
+      }),
     };
-    const { service, repair } = createService([low, passingValidation]);
-    const result = await service.compose({ transcript: analysisFixture.correctedTranscript });
+    const repaired = {
+      subject: 'Message',
+      body: 'Bonjour Ahmed. Je serai absent demain matin et reviendrai vers midi.',
+      language: 'fr',
+      recipient: 'Ahmed',
+      confidence: 0.85,
+    };
+    const repair = { repair: jest.fn().mockResolvedValue({ value: repaired }) };
+    const validation = { validate: jest.fn().mockResolvedValue(passingValidation) };
+    const service = new AiOrchestratorService(
+      extraction as never,
+      generation as never,
+      validation as never,
+      repair as never,
+      new FactualConsistencyService(),
+    );
+
+    const result = await service.compose({
+      transcript: 'Bonjour Ahmed. Je serai absent demain matin. Je reviendrai vers midi.',
+    });
+
     expect(repair.repair).toHaveBeenCalledTimes(1);
-    expect(result.metadata.retryUsed).toBe(true);
-    expect(result.metadata.fallbackUsed).toBe(false);
+    expect(result).toMatchObject({
+      status: 'completed',
+      email: { ...repaired, confidence: 0.95 },
+      metadata: { retryUsed: true, fallbackUsed: false },
+    });
   });
 
-  it('rejects rather than exposing a weak draft after the one repair is rejected', async () => {
-    const low = {
-      ...passingValidation,
-      pass: false,
-      qualityScore: { ...passingValidation.qualityScore, overall: 0.6 },
-      validationWarnings: ['Qualité insuffisante'],
+  it('returns the transcript as a minimal safe fallback after two rejected outputs', async () => {
+    const transcript = 'Je serai absent demain matin.';
+    const unsafe = {
+      subject: 'Réunion Atlas',
+      body: 'Je serai absent demain matin pour rencontrer Sarah à Paris.',
+      language: 'fr',
+      recipient: 'Ahmed',
+      confidence: 0.4,
     };
-    const { service, repair } = createService([low, low]);
-    await service.compose({ transcript: analysisFixture.correctedTranscript }).catch((error) =>
-      expect(error.getResponse()).toMatchObject({
-        error: { code: 'AI_GENERATION_FAILED', retryable: true },
-      }),
+    const service = new AiOrchestratorService(
+      { extract: jest.fn().mockResolvedValue({ value: extractionValue }) } as never,
+      { generate: jest.fn().mockResolvedValue({ model: 'test-model', value: unsafe }) } as never,
+      { validate: jest.fn().mockResolvedValue(passingValidation) } as never,
+      { repair: jest.fn().mockResolvedValue({ value: unsafe }) } as never,
+      new FactualConsistencyService(),
     );
-    expect(repair.repair).toHaveBeenCalledTimes(1);
+
+    const result = await service.compose({ transcript });
+
+    expect(result.email.body).toBe(transcript);
+    expect(result.email.subject).toBe('Message');
+    expect(result.metadata.fallbackUsed).toBe(true);
   });
 });
