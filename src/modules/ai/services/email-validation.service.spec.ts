@@ -1,97 +1,61 @@
+import { analysisFixture, emailFixture, passingValidation } from '../testing/ai-test.fixtures';
 import { EmailValidationService } from './email-validation.service';
 
-const extraction = {
-  language: 'fr',
-  intent: 'rewrite',
-  recipient: 'Achref',
-  facts: ['Merci'],
-  constraints: [],
-  requestedActions: [],
-  dates: [],
-  amounts: [],
-  names: ['Achref'],
-  keywords: ['application'],
-  transcriptionCorrections: [],
-  tone: 'professional',
-  ambiguities: [],
-  needsClarification: false,
-  clarificationQuestions: [],
-};
-
-const email = {
-  language: 'fr',
-  subject: "Mise à jour de l'application",
-  recipient: 'Achref',
-  body: "Bonjour Achref,\n\nJ'ai modifié l'application. Merci.\n\nCordialement",
-  confidence: 0.98,
-};
-
-const validation = (unsupportedClaims: string[]) => ({
-  supportedFacts: true,
-  missingFacts: [],
-  unsupportedClaims,
-  negationPreserved: true,
-  languageMatch: true,
-  toneMatch: true,
-  actionClear: true,
-  pass: unsupportedClaims.length === 0,
-});
-
 describe('EmailValidationService', () => {
-  it('removes false positives that are literal source content or neutral scaffolding', async () => {
+  it('removes false positives for literal source content and neutral scaffolding', async () => {
     const complete = jest.fn().mockResolvedValue({
       model: 'test-model',
-      value: validation(['Merci', 'Cordialement']),
+      value: { ...passingValidation, unsupportedClaims: ['Cordialement'] },
     });
     const service = new EmailValidationService({ complete } as never);
-
     await expect(
-      service.validate("Achref, j'ai modifié l'application. Merci.", extraction, email),
+      service.validate(analysisFixture.correctedTranscript, analysisFixture, emailFixture),
     ).resolves.toMatchObject({ unsupportedClaims: [], pass: true });
   });
 
-  it('keeps genuinely unsupported claims rejected', async () => {
-    const complete = jest.fn().mockResolvedValue({
-      model: 'test-model',
-      value: validation(['Le rendez-vous de vendredi est confirmé']),
-    });
-    const service = new EmailValidationService({ complete } as never);
-
-    await expect(
-      service.validate("Achref, j'ai modifié l'application. Merci.", extraction, email),
-    ).resolves.toMatchObject({
-      unsupportedClaims: ['Le rendez-vous de vendredi est confirmé'],
-      pass: false,
-    });
-  });
-
-  it('accepts a declared contextual STT correction as source-supported', async () => {
+  it('rejects unsupported claims and a quality score below 0.82', async () => {
     const complete = jest.fn().mockResolvedValue({
       model: 'test-model',
       value: {
-        ...validation(['corbeille']),
+        ...passingValidation,
+        unsupportedClaims: ['Le rendez-vous de vendredi est confirmé'],
+        qualityScore: { ...passingValidation.qualityScore, overall: 0.7 },
+      },
+    });
+    const service = new EmailValidationService({ complete } as never);
+    await expect(
+      service.validate(analysisFixture.correctedTranscript, analysisFixture, emailFixture),
+    ).resolves.toMatchObject({ pass: false, validationWarnings: expect.any(Array) });
+  });
+
+  it('accepts a declared contextual STT correction as supported', async () => {
+    const complete = jest.fn().mockResolvedValue({
+      model: 'test-model',
+      value: {
+        ...passingValidation,
+        unsupportedClaims: ['corbeille'],
         missingFacts: ['concordelle'],
       },
     });
     const service = new EmailValidationService({ complete } as never);
-    const correctedExtraction = {
-      ...extraction,
-      facts: ['Ajout d’une corbeille lors de la sélection de plusieurs emails'],
-      keywords: ['corbeille', 'sélection de plusieurs emails'],
-      transcriptionCorrections: [{ source: 'concordelle', corrected: 'corbeille' }],
+    const extraction = {
+      ...analysisFixture,
+      correctedTranscript: 'Ajouter une corbeille.',
+      transcriptCorrections: [
+        {
+          original: 'concordelle',
+          corrected: 'corbeille',
+          confidence: 0.97,
+          reason: 'Contexte non ambigu.',
+        },
+      ],
     };
-    const correctedEmail = {
-      ...email,
-      subject: "Mise à jour de l'application",
-      body: "Bonjour,\n\nJ'ai ajouté une corbeille lors de la sélection de plusieurs emails.\n\nCordialement",
+    const email = {
+      ...emailFixture,
+      body: 'Bonjour,\n\nAjouter une corbeille.\n\nBien cordialement,',
     };
-
     await expect(
-      service.validate(
-        "J'ai ajouté une concordelle lors de la sélection de plusieurs emails.",
-        correctedExtraction,
-        correctedEmail,
-      ),
+      service.validate('Ajouter une concordelle.', extraction, email),
     ).resolves.toMatchObject({ missingFacts: [], unsupportedClaims: [], pass: true });
   });
 });

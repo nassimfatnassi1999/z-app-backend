@@ -1,0 +1,60 @@
+import { EmailIntentAnalysis, EmailValidation, GeneratedEmail } from '../schemas/ai.schemas';
+
+export const analysisFixture: EmailIntentAnalysis = {
+  detectedLanguage: 'fr',
+  correctedTranscript: 'Bonjour Ahmed, je serai absent demain matin et reviendrai vers midi.',
+  emailIntent: 'information',
+  detectedRecipientType: 'colleague',
+  detectedRelationship: 'professional',
+  detectedTone: 'professional',
+  emailComplexity: 'medium',
+  recipient: 'Ahmed',
+  keyFacts: ['Absent demain matin', 'Retour vers midi'],
+  dates: ['demain matin'],
+  times: [],
+  amounts: [],
+  quantities: [],
+  people: ['Ahmed'],
+  products: [],
+  actions: ['Informer de son absence', 'Revenir vers midi'],
+  constraints: [],
+  ambiguities: [],
+  transcriptCorrections: [],
+};
+
+export const emailFixture: GeneratedEmail = {
+  subject: 'Absence demain matin',
+  body: 'Bonjour Ahmed,\n\nJe serai absent demain matin et reviendrai vers midi.\n\nBonne journée,',
+  detectedLanguage: 'fr',
+  detectedRecipientType: 'colleague',
+  detectedRelationship: 'professional',
+  detectedTone: 'professional',
+  emailIntent: 'information',
+  emailComplexity: 'medium',
+  confidence: 0.94,
+  validationWarnings: [],
+  recipient: 'Ahmed',
+};
+
+export const passingValidation: EmailValidation = {
+  supportedFacts: true,
+  missingFacts: [],
+  unsupportedClaims: [],
+  negationPreserved: true,
+  languageMatch: true,
+  toneMatch: true,
+  actionClear: true,
+  greetingAndClosingFit: true,
+  noRepetition: true,
+  noRoboticOrMetaContent: true,
+  qualityScore: {
+    completeness: 0.95,
+    factualConsistency: 0.98,
+    toneFit: 0.94,
+    fluency: 0.93,
+    professionalism: 0.95,
+    overall: 0.95,
+  },
+  validationWarnings: [],
+  pass: true,
+};

@@ -1,58 +1,33 @@
 import { generatedEmailSchema } from '../schemas/ai.schemas';
+import { analysisFixture, emailFixture } from '../testing/ai-test.fixtures';
 import { EmailGenerationService } from './email-generation.service';
 
-const extraction = {
-  language: 'fr',
-  intent: 'Informer',
-  recipient: 'Achref',
-  facts: ['Des bugs subsistent dans la génération des emails'],
-  constraints: [],
-  requestedActions: [],
-  dates: ['demain matin'],
-  amounts: [],
-  names: ['Achref'],
-  keywords: ['application', 'bugs', 'génération des emails'],
-  transcriptionCorrections: [],
-  tone: 'professional',
-  ambiguities: [],
-  needsClarification: false,
-  clarificationQuestions: [],
-};
-
 describe('EmailGenerationService', () => {
-  it('uses conservative sampling and canonical extraction fields', async () => {
+  it('generates only from analysis and forces canonical metadata', async () => {
     const complete = jest.fn().mockResolvedValue({
       model: 'test-model',
-      value: {
-        language: 'en',
-        subject: "Avancement des modifications de l'application",
-        recipient: 'Someone else',
-        body: 'Bonjour Achref,\n\nDes bugs subsistent dans la génération des emails. Je pense terminer demain matin.\n\nCordialement,',
-        confidence: 0.91,
-      },
+      value: { ...emailFixture, detectedLanguage: 'en', recipient: 'Other' },
     });
     const service = new EmailGenerationService({ complete } as never);
-
     const result = await service.generate({
-      transcript:
-        "Bonjour Achref, j'ai modifié l'application, mais des bugs subsistent dans la génération des emails. Je pense terminer demain matin.",
-      extraction,
+      transcript: 'raw transcript',
+      extraction: analysisFixture,
     });
-
     expect(complete).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'generation',
         schema: generatedEmailSchema,
-        temperature: 0.1,
-        topP: 0.2,
-        presencePenalty: 0,
-        frequencyPenalty: 0.1,
+        temperature: 0.35,
+        topP: 0.7,
+        input: expect.objectContaining({
+          correctedTranscript: analysisFixture.correctedTranscript,
+        }),
       }),
     );
     expect(result.value).toMatchObject({
-      language: 'fr',
-      recipient: 'Achref',
-      confidence: 0.91,
+      detectedLanguage: 'fr',
+      detectedRecipientType: 'colleague',
+      recipient: 'Ahmed',
     });
   });
 });

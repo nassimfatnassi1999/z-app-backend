@@ -10,6 +10,7 @@ import { EmailValidationService } from './services/email-validation.service';
 import { EmailRepairService } from './services/email-repair.service';
 import { AiOrchestratorService } from './services/ai-orchestrator.service';
 import { FactualConsistencyService } from './services/factual-consistency.service';
+import { TranscriptCleanerService } from './services/transcript-cleaner.service';
 
 @Module({
   controllers: [AiController, AiPipelineController],
@@ -23,6 +24,7 @@ import { FactualConsistencyService } from './services/factual-consistency.servic
     EmailRepairService,
     AiOrchestratorService,
     FactualConsistencyService,
+    TranscriptCleanerService,
   ],
   exports: [AiService, AiOrchestratorService, IdempotencyService],
 })

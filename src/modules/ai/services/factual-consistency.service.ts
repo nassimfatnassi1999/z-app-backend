@@ -1,6 +1,28 @@
 import { Injectable } from '@nestjs/common';
 import { GeneratedEmail, TranscriptExtraction } from '../schemas/ai.schemas';
 
+type AuditedEmail = Pick<GeneratedEmail, 'subject' | 'body' | 'recipient'> & {
+  language?: string;
+  confidence?: number;
+};
+type LegacyExtraction = {
+  language: string;
+  recipient: string | null;
+  dates: string[];
+  amounts: string[];
+  names: string[];
+  keywords: string[];
+  transcriptionCorrections: Array<{ source: string; corrected: string }>;
+  intent?: string;
+  facts?: string[];
+  constraints?: string[];
+  requestedActions?: string[];
+  tone?: string;
+  ambiguities?: string[];
+  needsClarification?: boolean;
+  clarificationQuestions?: string[];
+};
+
 export type ProtectedFactKind =
   | 'number'
   | 'date'
@@ -318,8 +340,8 @@ export class FactualConsistencyService {
 
   audit(
     transcript: string,
-    email: GeneratedEmail,
-    extraction?: TranscriptExtraction,
+    email: AuditedEmail,
+    extraction?: TranscriptExtraction | LegacyExtraction,
   ): FactualConsistencyAudit {
     const source = this.normalize(transcript);
     const output = [email.subject, email.body, email.recipient].join('\n');
@@ -421,13 +443,28 @@ export class FactualConsistencyService {
     }
 
     if (extraction) {
-      for (const name of extraction.names) addMissing('named_entity', name);
+      const modern = 'detectedLanguage' in extraction;
+      const people = modern ? extraction.people : extraction.names;
+      const quantities = modern ? extraction.quantities : [];
+      const keywords = modern
+        ? [...extraction.products, ...extraction.actions]
+        : extraction.keywords;
+      const corrections = modern
+        ? extraction.transcriptCorrections
+        : extraction.transcriptionCorrections.map((value) => ({
+            original: value.source,
+            corrected: value.corrected,
+          }));
+      for (const name of people) addMissing('named_entity', name);
       if (extraction.recipient) addMissing('named_entity', extraction.recipient);
       for (const date of extraction.dates) addMissing('date', date);
       for (const amount of extraction.amounts) addMissing('number', amount);
-      for (const keyword of extraction.keywords) addMissing('keyword', keyword);
-      for (const correction of extraction.transcriptionCorrections) {
-        const sourceTerm = this.normalize(correction.source);
+      for (const quantity of quantities) addMissing('number', quantity);
+      for (const keyword of keywords) {
+        addMissing('keyword', keyword);
+      }
+      for (const correction of corrections) {
+        const sourceTerm = this.normalize(correction.original);
         const correctedTerm = this.normalize(correction.corrected);
         if (
           source.includes(sourceTerm) &&
@@ -441,11 +478,13 @@ export class FactualConsistencyService {
           this.containsTerm(normalizedOutput, sourceTerm) &&
           !this.containsTerm(normalizedOutput, correctedTerm)
         ) {
-          forceUnsupported('keyword', correction.source);
+          forceUnsupported('keyword', correction.original);
         }
       }
 
-      const language = extraction.language.toLocaleLowerCase().split('-')[0];
+      const language = (modern ? extraction.detectedLanguage : extraction.language)
+        .toLocaleLowerCase()
+        .split('-')[0];
       for (const [label, markersByLanguage] of Object.entries(this.semanticMarkers)) {
         const markers = markersByLanguage[language] ?? [];
         const sourceMarker = markers.find((marker) => source.includes(this.normalize(marker)));

@@ -68,6 +68,15 @@ describe('GroqJsonProvider', () => {
     });
   });
 
+  it('strips a JSON Markdown fence before strict validation', async () => {
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        groqResponse('```json\n{"subject":"Réunion","body":"Réunion confirmée demain."}\n```'),
+      );
+    await expect(complete(provider())).resolves.toMatchObject({ value: { subject: 'Réunion' } });
+  });
+
   it('repairs an invalid response exactly once', async () => {
     const fetchMock = jest
       .spyOn(global, 'fetch')

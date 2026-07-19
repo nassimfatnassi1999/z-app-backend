@@ -49,6 +49,18 @@ export function validateEnvironment(config: Record<string, unknown>) {
   if (String(config.AI_MAX_REPAIR_ATTEMPTS) !== '1') {
     throw new Error('AI_MAX_REPAIR_ATTEMPTS must be 1');
   }
+  const groqTimeout = Number(config.GROQ_TIMEOUT_MS ?? 30_000);
+  if (!Number.isInteger(groqTimeout) || groqTimeout < 1_000 || groqTimeout > 120_000) {
+    throw new Error('GROQ_TIMEOUT_MS must be between 1000 and 120000');
+  }
+  const maxTokens = Number(config.GROQ_MAX_TOKENS ?? 1200);
+  if (!Number.isInteger(maxTokens) || maxTokens < 256 || maxTokens > 8192) {
+    throw new Error('GROQ_MAX_TOKENS must be between 256 and 8192');
+  }
+  const temperature = Number(config.GROQ_TEMPERATURE ?? 0.35);
+  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 1) {
+    throw new Error('GROQ_TEMPERATURE must be between 0 and 1');
+  }
   if (config.NODE_ENV === 'production' && config.MAIL_ENABLED !== 'true') {
     throw new Error('MAIL_ENABLED must be true in production');
   }

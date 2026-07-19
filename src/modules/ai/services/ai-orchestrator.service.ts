@@ -6,6 +6,7 @@ import { EmailRepairService } from './email-repair.service';
 import { EmailValidationService } from './email-validation.service';
 import { TranscriptExtractionService } from './transcript-extraction.service';
 import { FactualConsistencyService } from './factual-consistency.service';
+import { BusinessException } from '../../../common/errors/business-error';
 
 @Injectable()
 export class AiOrchestratorService {
@@ -32,7 +33,7 @@ export class AiOrchestratorService {
     let audit = this.consistency.audit(input.transcript, email, extracted.value);
     validation = this.withDeterministicAudit(validation, audit);
     let retryUsed = false;
-    if (!validation.pass) {
+    if (!validation.pass || validation.qualityScore.overall < 0.82) {
       retryUsed = true;
       this.logRejection('initial', input.transcript, email.body, audit, validation);
       email = (
@@ -47,36 +48,24 @@ export class AiOrchestratorService {
       audit = this.consistency.audit(input.transcript, email, extracted.value);
       validation = this.withDeterministicAudit(validation, audit);
     }
-    let fallbackUsed = false;
-    if (!validation.pass) {
-      fallbackUsed = true;
+    if (!validation.pass || validation.qualityScore.overall < 0.82) {
       this.logRejection('repair', input.transcript, email.body, audit, validation);
-      email = {
-        language: extracted.value.language,
-        subject: this.fallbackSubject(extracted.value.language),
-        recipient: extracted.value.recipient ?? '',
-        body: this.minimalRewrite(input.transcript),
-        confidence: 0.9,
-      };
-      validation = {
-        supportedFacts: true,
-        missingFacts: [],
-        unsupportedClaims: [],
-        negationPreserved: true,
-        languageMatch: true,
-        toneMatch: true,
-        actionClear: true,
-        pass: true,
-      };
+      throw new BusinessException(
+        'AI_GENERATION_FAILED',
+        'La génération n’a pas atteint le niveau de qualité requis. Réessayez.',
+        true,
+        502,
+      );
     }
     email = {
       ...email,
-      language: extracted.value.language,
+      detectedLanguage: extracted.value.detectedLanguage,
       recipient: extracted.value.recipient ?? '',
-      confidence: fallbackUsed ? 0.9 : retryUsed ? 0.95 : 0.98,
+      confidence: Math.min(email.confidence, validation.qualityScore.overall),
+      validationWarnings: validation.validationWarnings,
     };
     this.logger.log(
-      `AI comparison completed transcriptChars=${input.transcript.length} emailChars=${email.body.length} retryUsed=${retryUsed} fallbackUsed=${fallbackUsed}`,
+      `AI comparison completed transcriptChars=${input.transcript.length} emailChars=${email.body.length} retryUsed=${retryUsed} fallbackUsed=false`,
     );
     return {
       status: 'completed' as const,
@@ -88,8 +77,8 @@ export class AiOrchestratorService {
         model: generated.model,
         promptVersion: generationPromptVersion,
         retryUsed,
-        fallbackUsed,
-        qualityScore: email.confidence,
+        fallbackUsed: false,
+        qualityScore: validation.qualityScore,
       },
     };
   }
@@ -112,28 +101,6 @@ export class AiOrchestratorService {
       ],
       pass: false,
     };
-  }
-
-  private minimalRewrite(transcript: string) {
-    return transcript
-      .normalize('NFKC')
-      .replace(/\[(?:noise|music|silence|bruit|musique)\]/gi, ' ')
-      .replace(/[ \t]{2,}/g, ' ')
-      .trim();
-  }
-
-  private fallbackSubject(language: string) {
-    const subjects: Record<string, string> = {
-      fr: 'Message',
-      en: 'Message',
-      de: 'Nachricht',
-      es: 'Mensaje',
-      it: 'Messaggio',
-      pt: 'Mensagem',
-      nl: 'Bericht',
-      tr: 'Mesaj',
-    };
-    return subjects[language.toLocaleLowerCase().split('-')[0]] ?? 'Message';
   }
 
   private logRejection(

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 import { fetchWithTimeout } from '../../../common/http/fetch-with-timeout';
 import { BusinessException } from '../../../common/errors/business-error';
+import type { PromptDefinition } from '../prompts/registry';
 
 type ModelKind = 'extraction' | 'generation' | 'validation';
 
@@ -14,7 +15,7 @@ export class GroqJsonProvider {
 
   async complete<T>(options: {
     kind: ModelKind;
-    prompt: string;
+    prompt: string | PromptDefinition;
     input: unknown;
     schema: z.ZodType<T, z.ZodTypeDef, unknown>;
     temperature: number;
@@ -25,29 +26,47 @@ export class GroqJsonProvider {
     const apiKey = this.config.get<string>('GROQ_API_KEY')!;
     const model = this.modelFor(options.kind);
     const baseUrl = this.config.get<string>('GROQ_BASE_URL')!;
-    const timeoutMs = Number(this.config.get<string>('AI_REQUEST_TIMEOUT_MS'));
+    const timeoutMs = this.numberConfig(
+      'GROQ_TIMEOUT_MS',
+      this.numberConfig('AI_REQUEST_TIMEOUT_MS', 30_000),
+    );
+    const maxTokens = this.numberConfig('GROQ_MAX_TOKENS', 1200);
+    const prompt =
+      typeof options.prompt === 'string'
+        ? { id: 'unregistered', version: 'legacy', template: options.prompt }
+        : options.prompt;
+    const temperature =
+      options.kind === 'generation'
+        ? this.numberConfig('GROQ_TEMPERATURE', options.temperature)
+        : options.temperature;
     const endpoint = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-    const initialContent = await this.request({
+    const startedAt = Date.now();
+    const initialResponse = await this.request({
       endpoint,
       apiKey,
       model,
       timeoutMs,
-      temperature: options.temperature,
+      temperature,
       topP: options.topP ?? 0.15,
       presencePenalty: options.presencePenalty ?? 0,
       frequencyPenalty: options.frequencyPenalty ?? 0,
+      maxTokens,
       messages: [
-        { role: 'system', content: options.prompt },
+        { role: 'system', content: prompt.template },
         { role: 'user', content: JSON.stringify(options.input) },
       ],
     });
+    const initialContent = initialResponse.content;
     const initial = this.parse(options.schema, initialContent);
-    if (initial.success) return { value: initial.data, model };
+    if (initial.success) {
+      this.logCompletion(prompt, model, startedAt, 'success', 1, initialResponse.totalTokens);
+      return { value: initial.data, model };
+    }
 
     this.logger.warn(
       `provider=groq event=invalid_json kind=${options.kind} model=${model} repairAttempt=1 issueCount=${initial.issueCount}`,
     );
-    const repairedContent = await this.request({
+    const repairedResponse = await this.request({
       endpoint,
       apiKey,
       model,
@@ -56,8 +75,9 @@ export class GroqJsonProvider {
       topP: 0.15,
       presencePenalty: 0,
       frequencyPenalty: 0,
+      maxTokens,
       messages: [
-        { role: 'system', content: options.prompt },
+        { role: 'system', content: prompt.template },
         {
           role: 'user',
           content: JSON.stringify({
@@ -68,8 +88,19 @@ export class GroqJsonProvider {
         },
       ],
     });
+    const repairedContent = repairedResponse.content;
     const repaired = this.parse(options.schema, repairedContent);
-    if (repaired.success) return { value: repaired.data, model };
+    if (repaired.success) {
+      this.logCompletion(
+        prompt,
+        model,
+        startedAt,
+        'repaired',
+        2,
+        this.sumTokens(initialResponse.totalTokens, repairedResponse.totalTokens),
+      );
+      return { value: repaired.data, model };
+    }
 
     this.logger.warn(
       `provider=groq event=invalid_json kind=${options.kind} model=${model} repairAttempt=exhausted issueCount=${repaired.issueCount}`,
@@ -91,6 +122,7 @@ export class GroqJsonProvider {
     topP: number;
     presencePenalty: number;
     frequencyPenalty: number;
+    maxTokens: number;
     messages: Array<{ role: 'system' | 'user'; content: string }>;
   }) {
     let response: Response;
@@ -109,6 +141,7 @@ export class GroqJsonProvider {
             top_p: options.topP,
             presence_penalty: options.presencePenalty,
             frequency_penalty: options.frequencyPenalty,
+            max_tokens: options.maxTokens,
             seed: 7,
             response_format: { type: 'json_object' },
             messages: options.messages,
@@ -140,8 +173,12 @@ export class GroqJsonProvider {
     try {
       const payload = (await response.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
+        usage?: { total_tokens?: number };
       };
-      return payload.choices?.[0]?.message?.content ?? '';
+      return {
+        content: payload.choices?.[0]?.message?.content ?? '',
+        totalTokens: payload.usage?.total_tokens,
+      };
     } catch {
       throw new BusinessException(
         'AI_PROVIDER_ERROR',
@@ -154,7 +191,12 @@ export class GroqJsonProvider {
 
   private parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, content: string) {
     try {
-      const parsed: unknown = JSON.parse(content);
+      const cleaned = content
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const parsed: unknown = JSON.parse(cleaned);
       const result = schema.safeParse(parsed);
       if (result.success) {
         return { success: true as const, data: result.data, issueCount: 0 };
@@ -199,5 +241,28 @@ export class GroqJsonProvider {
           ? 'GROQ_VALIDATION_MODEL'
           : 'GROQ_EMAIL_MODEL';
     return this.config.get<string>(key)!;
+  }
+
+  private numberConfig(name: string, fallback: number) {
+    const value = Number(this.config.get<string>(name));
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  private logCompletion(
+    prompt: Pick<PromptDefinition, 'id' | 'version'>,
+    model: string,
+    startedAt: number,
+    status: string,
+    attempts: number,
+    tokenCount?: number,
+  ) {
+    this.logger.log(
+      `promptId=${prompt.id} promptVersion=${prompt.version} model=${model} latencyMs=${Date.now() - startedAt} tokenCount=${tokenCount ?? 'unavailable'} status=${status} attempts=${attempts}`,
+    );
+  }
+
+  private sumTokens(first?: number, second?: number) {
+    if (first == null && second == null) return undefined;
+    return (first ?? 0) + (second ?? 0);
   }
 }

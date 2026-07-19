@@ -1,44 +1,42 @@
+import { analysisFixture } from '../testing/ai-test.fixtures';
+import { TranscriptCleanerService } from './transcript-cleaner.service';
 import { TranscriptExtractionService } from './transcript-extraction.service';
 
-const extracted = {
-  language: 'en',
-  intent: 'rewrite',
-  recipient: null,
-  facts: ['Rendez-vous le 18 juillet à 14 h 30'],
-  constraints: [],
-  requestedActions: [],
-  dates: ['18 juillet', '14 h 30'],
-  amounts: [],
-  names: [],
-  keywords: ['rendez-vous'],
-  transcriptionCorrections: [],
-  tone: 'professional',
-  ambiguities: [],
-  needsClarification: false,
-  clarificationQuestions: [],
-};
-
 describe('TranscriptExtractionService', () => {
-  it('keeps a supported manual language even when the model detects English', async () => {
-    const complete = jest.fn().mockResolvedValue({ model: 'test-model', value: extracted });
-    const service = new TranscriptExtractionService({ complete } as never);
-
-    const result = await service.extract(
-      'Rendez-vous le 18 juillet à 14 h 30.',
-      'fr',
-      'professional',
+  it('keeps a supported manually requested output language', async () => {
+    const complete = jest.fn().mockResolvedValue({
+      model: 'test-model',
+      value: { ...analysisFixture, detectedLanguage: 'en' },
+    });
+    const service = new TranscriptExtractionService(
+      { complete } as never,
+      new TranscriptCleanerService(),
     );
-
-    expect(result.value.language).toBe('fr');
-    expect(result.value.facts).toEqual(extracted.facts);
+    const result = await service.extract('Rendez-vous le 18 juillet.', 'fr');
+    expect(result.value.detectedLanguage).toBe('fr');
   });
 
-  it('retains provider detection in automatic mode', async () => {
-    const complete = jest.fn().mockResolvedValue({ model: 'test-model', value: extracted });
-    const service = new TranscriptExtractionService({ complete } as never);
-
-    const result = await service.extract('Meeting tomorrow.', 'auto');
-
-    expect(result.value.language).toBe('en');
+  it('retains automatic detection and merges conservative STT corrections', async () => {
+    const complete = jest.fn().mockResolvedValue({
+      model: 'test-model',
+      value: {
+        ...analysisFixture,
+        correctedTranscript: 'Ajouter une corbeille.',
+        transcriptCorrections: [],
+      },
+    });
+    const service = new TranscriptExtractionService(
+      { complete } as never,
+      new TranscriptCleanerService(),
+    );
+    const result = await service.extract('Ajouter une concordelle.', 'auto');
+    expect(result.value.detectedLanguage).toBe('fr');
+    expect(result.value.transcriptCorrections).toEqual([
+      expect.objectContaining({
+        original: 'concordelle',
+        corrected: 'corbeille',
+        confidence: 0.97,
+      }),
+    ]);
   });
 });
