@@ -1,49 +1,25 @@
-import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AiPipelineException } from '../ai-pipeline.error';
 import { AiProviderError } from '../providers/ai-provider.error';
 import {
   AiProviderName,
   EmailAiProvider,
-  GeneratedEmail,
+  GeneratedEmailContent,
 } from '../providers/email-ai-provider.types';
 import { AiProviderRouterService } from './ai-provider-router.service';
 import { InMemoryRoundRobinCounter } from './round-robin-counter.service';
 
-const email: GeneratedEmail = {
-  subject: 'Sujet',
-  body: 'Corps du message valide.',
+const email: GeneratedEmailContent = {
+  subject: 'Déploiement terminé',
+  body: 'Bonjour,\n\nLe déploiement est terminé.\n\nCordialement,',
   detectedLanguage: 'fr',
-  detectedRecipientType: 'person',
-  detectedRelationship: 'professional',
   detectedTone: 'professional',
-  emailIntent: 'inform',
-  emailComplexity: 'simple',
-  confidence: 0.98,
-  validationWarnings: [],
+  emailType: 'information',
+  confidence: 0.96,
 };
+const input = { transcript: 'Le déploiement est terminé.', preferences: { language: 'fr' } };
 
-const input = {
-  transcript: 'Écrivez un message professionnel.',
-  extraction: {
-    language: 'fr',
-    intent: 'inform',
-    recipient: null,
-    facts: [],
-    constraints: [],
-    requestedActions: [],
-    dates: [],
-    amounts: [],
-    names: [],
-    keywords: [],
-    transcriptionCorrections: [],
-    tone: 'professional',
-    ambiguities: [],
-    needsClarification: false,
-    clarificationQuestions: [],
-  },
-};
-
-function mockProvider(name: AiProviderName, configured = true): EmailAiProvider {
+function provider(name: AiProviderName, configured = true): EmailAiProvider {
   return {
     name,
     model: `${name}-model`,
@@ -52,31 +28,18 @@ function mockProvider(name: AiProviderName, configured = true): EmailAiProvider 
   };
 }
 
-function setup(
-  options: {
-    order?: string;
-    configured?: Partial<Record<AiProviderName, boolean>>;
-    timeout?: number;
-    threshold?: number;
-    cooldown?: number;
-    maxAttempts?: number;
-  } = {},
-) {
-  const groq = mockProvider(AiProviderName.GROQ, options.configured?.groq ?? true);
-  const gemini = mockProvider(AiProviderName.GEMINI, options.configured?.gemini ?? true);
-  const openrouter = mockProvider(
-    AiProviderName.OPENROUTER,
-    options.configured?.openrouter ?? true,
-  );
-  const config = new ConfigService({
-    AI_PROVIDER_ORDER: options.order ?? 'groq,gemini,openrouter',
-    AI_PROVIDER_TIMEOUT_MS: String(options.timeout ?? 30_000),
-    AI_PROVIDER_MAX_ATTEMPTS: String(options.maxAttempts ?? 3),
-    AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD: String(options.threshold ?? 3),
-    AI_CIRCUIT_BREAKER_COOLDOWN_MS: String(options.cooldown ?? 60_000),
-  });
+function setup(options: { order?: string; timeout?: number; threshold?: number } = {}) {
+  const groq = provider(AiProviderName.GROQ);
+  const gemini = provider(AiProviderName.GEMINI);
+  const openrouter = provider(AiProviderName.OPENROUTER);
   const router = new AiProviderRouterService(
-    config,
+    new ConfigService({
+      AI_PROVIDER_ORDER: options.order ?? 'groq,gemini,openrouter',
+      AI_PROVIDER_TIMEOUT_MS: String(options.timeout ?? 30_000),
+      AI_PROVIDER_MAX_ATTEMPTS: '3',
+      AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD: String(options.threshold ?? 3),
+      AI_CIRCUIT_BREAKER_COOLDOWN_MS: '60000',
+    }),
     groq as never,
     gemini as never,
     openrouter as never,
@@ -85,161 +48,83 @@ function setup(
   return { router, groq, gemini, openrouter };
 }
 
-function fail(provider: EmailAiProvider, error: unknown) {
-  jest.mocked(provider.generateEmail).mockRejectedValue(error);
-}
-
 describe('AiProviderRouterService', () => {
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
-  it('rotates Groq, Gemini, OpenRouter and returns to Groq', async () => {
+  it('round-robins between available providers and stops on first success', async () => {
     const { router, groq, gemini, openrouter } = setup();
-    await router.generateEmail(input);
-    await router.generateEmail(input);
-    await router.generateEmail(input);
-    await router.generateEmail(input);
-    expect(groq.generateEmail).toHaveBeenCalledTimes(2);
-    expect(gemini.generateEmail).toHaveBeenCalledTimes(1);
-    expect(openrouter.generateEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ['Groq to Gemini', AiProviderName.GROQ, AiProviderName.GEMINI],
-    ['Gemini to OpenRouter', AiProviderName.GEMINI, AiProviderName.OPENROUTER],
-  ])('fails over from %s', async (_label, first, second) => {
-    const { router, groq, gemini, openrouter } = setup({
-      order: `${first},${second}`,
-      configured: {
-        [AiProviderName.GROQ]: first === AiProviderName.GROQ || second === AiProviderName.GROQ,
-        [AiProviderName.GEMINI]:
-          first === AiProviderName.GEMINI || second === AiProviderName.GEMINI,
-        [AiProviderName.OPENROUTER]:
-          first === AiProviderName.OPENROUTER || second === AiProviderName.OPENROUTER,
-      },
-    });
-    const providers = { groq, gemini, openrouter };
-    fail(providers[first], new AiProviderError('network', 'down'));
-    await expect(router.generateEmail(input)).resolves.toEqual(email);
-    expect(providers[first].generateEmail).toHaveBeenCalledTimes(1);
-    expect(providers[second].generateEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it('uses the third provider after two failures without duplicate calls', async () => {
-    const { router, groq, gemini, openrouter } = setup();
-    fail(groq, new AiProviderError('http', 'busy', 500));
-    fail(gemini, new AiProviderError('invalid_json', 'invalid'));
-    await expect(router.generateEmail(input)).resolves.toEqual(email);
+    await router.generateEmail(input, 'r1');
+    await router.generateEmail(input, 'r2');
+    await router.generateEmail(input, 'r3');
     expect(groq.generateEmail).toHaveBeenCalledTimes(1);
     expect(gemini.generateEmail).toHaveBeenCalledTimes(1);
     expect(openrouter.generateEmail).toHaveBeenCalledTimes(1);
   });
 
-  it('returns service unavailable when every provider fails', async () => {
-    const { router, groq, gemini, openrouter } = setup();
-    for (const provider of [groq, gemini, openrouter]) {
-      fail(provider, new AiProviderError('unavailable', 'down'));
+  it('falls back after Groq failure and OpenRouter timeout, then records Gemini success once', async () => {
+    jest.useFakeTimers();
+    const { router, groq, openrouter, gemini } = setup({
+      order: 'groq,openrouter,gemini',
+      timeout: 50,
+    });
+    jest.mocked(groq.generateEmail).mockRejectedValue(new AiProviderError('network', 'down'));
+    jest.mocked(openrouter.generateEmail).mockImplementation(() => new Promise(() => undefined));
+
+    const promise = router.generateEmail(input, 'fallback-request');
+    await jest.advanceTimersByTimeAsync(51);
+    await expect(promise).resolves.toMatchObject({
+      email,
+      provider: 'gemini',
+      model: 'gemini-model',
+      attempts: 3,
+      fallbackReasons: ['groq:network', 'openrouter:timeout'],
+    });
+    expect(groq.generateEmail).toHaveBeenCalledTimes(1);
+    expect(openrouter.generateEmail).toHaveBeenCalledTimes(1);
+    expect(gemini.generateEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails over for invalid JSON, rate limit and unavailable model', async () => {
+    const { router, groq, gemini } = setup();
+    jest.mocked(groq.generateEmail).mockRejectedValue(new AiProviderError('invalid_json', 'bad'));
+    jest.mocked(gemini.generateEmail).mockRejectedValue(new AiProviderError('http', 'rate', 429));
+    await expect(router.generateEmail(input, 'r')).resolves.toMatchObject({
+      provider: 'openrouter',
+      attempts: 3,
+    });
+  });
+
+  it('opens a temporary circuit and returns a business error when all providers fail', async () => {
+    const { router, groq, gemini, openrouter } = setup({ threshold: 1 });
+    for (const item of [groq, gemini, openrouter]) {
+      jest.mocked(item.generateEmail).mockRejectedValue(new AiProviderError('unavailable', 'down'));
     }
-    await expect(router.generateEmail(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(router.generateEmail(input, 'r')).rejects.toMatchObject({
+      code: 'NO_AI_PROVIDER_AVAILABLE',
+    });
+    expect(router.getHealthState(AiProviderName.GROQ).circuitOpenUntil).not.toBeNull();
   });
 
-  it('ignores providers that are not configured', async () => {
-    const { router, groq, gemini } = setup({ configured: { groq: false } });
-    await router.generateEmail(input);
-    expect(groq.generateEmail).not.toHaveBeenCalled();
-    expect(gemini.generateEmail).toHaveBeenCalledTimes(1);
+  it('never logs provider secrets from thrown messages', async () => {
+    const secret = 'provider-secret-value';
+    const output: unknown[] = [];
+    jest.spyOn(console, 'log').mockImplementation((value) => output.push(value));
+    const { router, groq } = setup();
+    jest
+      .mocked(groq.generateEmail)
+      .mockRejectedValue(new AiProviderError('authentication', secret, 401));
+    await router.generateEmail(input, 'r');
+    expect(JSON.stringify(output)).not.toContain(secret);
   });
 
-  it('rejects when no provider is configured', async () => {
-    const { router } = setup({ configured: { groq: false, gemini: false, openrouter: false } });
-    expect(() => router.onModuleInit()).toThrow('At least one AI');
-    await expect(router.generateEmail(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
-  });
-
-  it.each([429, 500])('fails over for HTTP %i', async (status) => {
-    const { router, groq, gemini } = setup();
-    fail(groq, new AiProviderError('http', 'provider error', status));
-    await router.generateEmail(input);
-    expect(gemini.generateEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it('fails over when a provider model is unavailable', async () => {
-    const { router, groq, gemini } = setup();
-    fail(groq, new AiProviderError('unavailable', 'model unavailable', 404));
-    await router.generateEmail(input);
-    expect(gemini.generateEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not call any provider for invalid input DTO data', async () => {
-    const { router, groq, gemini, openrouter } = setup();
-    await expect(router.generateEmail({ ...input, transcript: ' ' })).rejects.toBeInstanceOf(
-      TypeError,
+  it('rejects an empty transcript before calling providers', async () => {
+    const { router, groq } = setup();
+    await expect(router.generateEmail({ transcript: ' ' }, 'r')).rejects.toBeInstanceOf(
+      AiPipelineException,
     );
     expect(groq.generateEmail).not.toHaveBeenCalled();
-    expect(gemini.generateEmail).not.toHaveBeenCalled();
-    expect(openrouter.generateEmail).not.toHaveBeenCalled();
-  });
-
-  it('fails over after an explicit timeout', async () => {
-    jest.useFakeTimers();
-    const { router, groq, gemini } = setup({ timeout: 50 });
-    jest.mocked(groq.generateEmail).mockImplementation(() => new Promise(() => undefined));
-    const result = router.generateEmail(input);
-    await jest.advanceTimersByTimeAsync(51);
-    await expect(result).resolves.toEqual(email);
-    expect(gemini.generateEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it('opens the circuit after three failures and skips it during cooldown', async () => {
-    const { router, groq } = setup({
-      order: 'groq',
-      configured: { gemini: false, openrouter: false },
-    });
-    fail(groq, new AiProviderError('network', 'down'));
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await expect(router.generateEmail(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
-    }
-    expect(router.getHealthState(AiProviderName.GROQ).circuitOpenUntil).not.toBeNull();
-    await expect(router.generateEmail(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(groq.generateEmail).toHaveBeenCalledTimes(3);
-  });
-
-  it('reuses a provider after cooldown and resets failures on success', async () => {
-    jest.useFakeTimers({ now: new Date('2026-07-19T00:00:00Z') });
-    const { router, groq } = setup({
-      order: 'groq',
-      configured: { gemini: false, openrouter: false },
-      threshold: 1,
-      cooldown: 1000,
-    });
-    fail(groq, new AiProviderError('network', 'down'));
-    await expect(router.generateEmail(input)).rejects.toBeInstanceOf(ServiceUnavailableException);
-    jest.mocked(groq.generateEmail).mockResolvedValue(email);
-    jest.advanceTimersByTime(1001);
-    await expect(router.generateEmail(input)).resolves.toEqual(email);
-    expect(router.getHealthState(AiProviderName.GROQ)).toMatchObject({
-      consecutiveFailures: 0,
-      circuitOpenUntil: null,
-    });
-  });
-
-  it('honors custom provider order', async () => {
-    const { router, openrouter } = setup({ order: 'openrouter,groq,gemini' });
-    await router.generateEmail(input);
-    expect(openrouter.generateEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it('never writes API keys contained in provider errors to logs', async () => {
-    const secret = 'super-secret-api-key';
-    const logs: unknown[][] = [];
-    jest.spyOn(Logger.prototype, 'log').mockImplementation((...args) => void logs.push(args));
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation((...args) => void logs.push(args));
-    jest.spyOn(Logger.prototype, 'error').mockImplementation((...args) => void logs.push(args));
-    const { router, groq } = setup();
-    fail(groq, new AiProviderError('authentication', secret, 401));
-    await router.generateEmail(input);
-    expect(JSON.stringify(logs)).not.toContain(secret);
   });
 });

@@ -4,10 +4,9 @@ import { IdempotencyService } from '../../common/idempotency/idempotency.service
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ComposeEmailDto } from './dto/compose-email.dto';
 import { ValidateEmailDto } from './dto/validate-email.dto';
-import { generatedEmailSchema, transcriptExtractionSchema } from './schemas/ai.schemas';
+import { generatedEmailContentSchema } from './schemas/ai.schemas';
 import { AiOrchestratorService } from './services/ai-orchestrator.service';
 import { EmailValidationService } from './services/email-validation.service';
-import { TranscriptExtractionService } from './services/transcript-extraction.service';
 
 @ApiTags('ai')
 @ApiBearerAuth()
@@ -16,16 +15,13 @@ import { TranscriptExtractionService } from './services/transcript-extraction.se
 export class AiPipelineController {
   constructor(
     private readonly orchestrator: AiOrchestratorService,
-    private readonly extraction: TranscriptExtractionService,
     private readonly validation: EmailValidationService,
     private readonly idempotency: IdempotencyService,
   ) {}
 
   @Post('extract')
   extract(@Body() dto: ComposeEmailDto) {
-    return this.extraction
-      .extract(dto.transcript, dto.language, dto.tone)
-      .then((result) => result.value);
+    return this.orchestrator.normalizeForCompatibility(dto.transcript, dto.language, dto.tone);
   }
 
   @Post('generate-email-v2')
@@ -35,10 +31,15 @@ export class AiPipelineController {
 
   @Post('validate-email')
   validate(@Body() dto: ValidateEmailDto) {
-    return this.validation.validate(
-      dto.transcript,
-      transcriptExtractionSchema.parse(dto.extraction),
-      generatedEmailSchema.parse(dto.email),
-    );
+    const legacy = dto.email as Record<string, unknown>;
+    const email = generatedEmailContentSchema.parse({
+      subject: legacy.subject,
+      body: legacy.body,
+      detectedLanguage: legacy.detectedLanguage ?? legacy.language ?? 'unknown',
+      detectedTone: legacy.detectedTone ?? legacy.tone ?? 'professional',
+      emailType: legacy.emailType ?? legacy.intent ?? 'information',
+      confidence: legacy.confidence ?? 0.5,
+    });
+    return this.validation.validate(dto.transcript, email, String(legacy.language ?? ''));
   }
 }

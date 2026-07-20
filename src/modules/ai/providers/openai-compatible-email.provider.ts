@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { AiProviderError } from './ai-provider.error';
-import { EmailGenerationInput, GeneratedEmail } from './email-ai-provider.types';
-import { EMAIL_PROVIDER_SYSTEM_PROMPT, emailProviderUserInput } from './email-provider-prompt';
+import { EmailGenerationInput, GeneratedEmailContent } from './email-ai-provider.types';
+import { emailProviderPrompt } from './email-provider-prompt';
 import { AiResponseParserService } from '../services/ai-response-parser.service';
 
 export abstract class OpenAiCompatibleEmailProvider {
@@ -19,7 +19,10 @@ export abstract class OpenAiCompatibleEmailProvider {
     return Boolean(this.apiKey.trim() && this.model.trim());
   }
 
-  async generateEmail(input: EmailGenerationInput): Promise<GeneratedEmail> {
+  async generateEmail(
+    input: EmailGenerationInput,
+    signal?: AbortSignal,
+  ): Promise<GeneratedEmailContent> {
     const client = new OpenAI({
       apiKey: this.apiKey,
       baseURL: this.baseUrl,
@@ -28,16 +31,20 @@ export abstract class OpenAiCompatibleEmailProvider {
       timeout: this.timeoutMs,
     });
     try {
-      const response = await client.chat.completions.create({
-        model: this.model,
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: EMAIL_PROVIDER_SYSTEM_PROMPT },
-          { role: 'user', content: emailProviderUserInput(input) },
-        ],
-      });
+      const prompt = emailProviderPrompt(input);
+      const response = await client.chat.completions.create(
+        {
+          model: this.model,
+          temperature: input.mode === 'repair' ? 0.1 : this.temperature,
+          max_tokens: this.maxTokens,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: prompt.system },
+            { role: 'user', content: prompt.user },
+          ],
+        },
+        { signal },
+      );
       return this.parser.parse(response.choices[0]?.message?.content ?? '');
     } catch (error) {
       if (error instanceof AiProviderError) throw error;

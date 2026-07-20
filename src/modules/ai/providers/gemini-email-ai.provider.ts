@@ -7,9 +7,9 @@ import {
   AiProviderName,
   EmailAiProvider,
   EmailGenerationInput,
-  GeneratedEmail,
+  GeneratedEmailContent,
 } from './email-ai-provider.types';
-import { EMAIL_PROVIDER_SYSTEM_PROMPT, emailProviderUserInput } from './email-provider-prompt';
+import { emailProviderPrompt } from './email-provider-prompt';
 
 @Injectable()
 export class GeminiEmailAiProvider implements EmailAiProvider {
@@ -33,15 +33,21 @@ export class GeminiEmailAiProvider implements EmailAiProvider {
     return Boolean(this.apiKey && this.model);
   }
 
-  async generateEmail(input: EmailGenerationInput): Promise<GeneratedEmail> {
+  async generateEmail(
+    input: EmailGenerationInput,
+    signal?: AbortSignal,
+  ): Promise<GeneratedEmailContent> {
     try {
+      if (signal?.aborted) throw new AiProviderError('timeout', 'AI provider request timed out');
       const client = new GoogleGenAI({ apiKey: this.apiKey });
+      const prompt = emailProviderPrompt(input);
       const response = await client.models.generateContent({
         model: this.model,
-        contents: emailProviderUserInput(input),
+        contents: prompt.user,
         config: {
-          systemInstruction: EMAIL_PROVIDER_SYSTEM_PROMPT,
-          temperature: this.temperature,
+          abortSignal: signal,
+          systemInstruction: prompt.system,
+          temperature: input.mode === 'repair' ? 0.1 : this.temperature,
           maxOutputTokens: this.maxOutputTokens,
           responseMimeType: 'application/json',
         },

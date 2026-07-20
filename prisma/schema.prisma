@@ -25,9 +25,37 @@ model User {
   messages                 Message[]
   devicePushTokens         DevicePushToken[]
   notificationSettings     NotificationSettings?
+  emailGenerations         EmailGeneration[]
 
   @@index([email])
   @@index([username])
+}
+
+model EmailGeneration {
+  id                 String   @id @default(uuid())
+  generationId       String   @unique
+  correlationId      String
+  userId             String?
+  analysisPromptId   String
+  generationPromptId String
+  repairPromptId     String?
+  promptHash         String?
+  provider           String
+  model              String
+  fallbackModelUsed  String?
+  temperature        Float
+  inputLanguage      String?
+  outputLanguage     String
+  enrichmentLevel    String
+  tone               String
+  repairUsed         Boolean  @default(false)
+  validationCodes    String[]
+  createdAt          DateTime @default(now())
+  user               User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([correlationId])
+  @@index([createdAt])
 }
 
 model DevicePushToken {

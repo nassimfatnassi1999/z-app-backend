@@ -4,6 +4,13 @@ const INSECURE_VALUES = new Set([
   'change_me_long_random_secret',
 ]);
 
+// Shared non-secret defaults used by the typed configuration facade.
+export const ENVIRONMENT_DEFAULTS = {
+  DEEPGRAM_MODEL: 'nova-3',
+  DEEPGRAM_LANGUAGE: 'multi',
+  DEEPGRAM_DETECT_LANGUAGE: 'true',
+} as const;
+
 function requiredSecret(config: Record<string, unknown>, name: string, minimumLength = 32) {
   const value = String(config[name] ?? '').trim();
   if (
@@ -60,16 +67,10 @@ export function validateEnvironment(config: Record<string, unknown>) {
     throw new Error('At least one AI provider and model must be configured');
   }
   validateInteger(config, 'AI_PROVIDER_TIMEOUT_MS', 30_000, 1_000, 120_000);
+  validateInteger(config, 'AI_MAX_TRANSCRIPT_CHARS', 20_000, 100, 100_000);
   validateInteger(config, 'AI_PROVIDER_MAX_ATTEMPTS', 3, 1, 3);
   validateInteger(config, 'AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD', 3, 1, 100);
   validateInteger(config, 'AI_CIRCUIT_BREAKER_COOLDOWN_MS', 60_000, 1_000, 3_600_000);
-  const timeout = Number(config.AI_REQUEST_TIMEOUT_MS);
-  if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 120_000) {
-    throw new Error('AI_REQUEST_TIMEOUT_MS must be between 1000 and 120000');
-  }
-  if (String(config.AI_MAX_REPAIR_ATTEMPTS) !== '1') {
-    throw new Error('AI_MAX_REPAIR_ATTEMPTS must be 1');
-  }
   if (config.NODE_ENV === 'production' && config.MAIL_ENABLED !== 'true') {
     throw new Error('MAIL_ENABLED must be true in production');
   }

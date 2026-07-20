@@ -1,50 +1,33 @@
 import { EmailGenerationService } from './email-generation.service';
 
-const extraction = {
-  language: 'fr',
-  intent: 'Informer',
-  recipient: 'Achref',
-  facts: ['Des bugs subsistent dans la génération des emails'],
-  constraints: [],
-  requestedActions: [],
-  dates: ['demain matin'],
-  amounts: [],
-  names: ['Achref'],
-  keywords: ['application', 'bugs', 'génération des emails'],
-  transcriptionCorrections: [],
-  tone: 'professional',
-  ambiguities: [],
-  needsClarification: false,
-  clarificationQuestions: [],
-};
-
 describe('EmailGenerationService', () => {
-  it('delegates to the provider router and preserves canonical extraction fields', async () => {
+  it('adds provider metadata in the backend and performs one logical generation', async () => {
     const generateEmail = jest.fn().mockResolvedValue({
-      subject: "Avancement des modifications de l'application",
-      body: 'Bonjour Achref,\n\nDes bugs subsistent dans la génération des emails. Je pense terminer demain matin.\n\nCordialement,',
-      detectedLanguage: 'en',
-      detectedRecipientType: 'person',
-      detectedRelationship: 'professional',
-      detectedTone: 'professional',
-      emailIntent: 'inform',
-      emailComplexity: 'simple',
-      confidence: 0.91,
-      validationWarnings: [],
+      email: {
+        subject: 'Absence prévue demain',
+        body: 'Bonjour,\n\nJe serai absent demain.\n\nCordialement,',
+        detectedLanguage: 'fr',
+        detectedTone: 'professional',
+        emailType: 'information',
+        confidence: 0.95,
+      },
+      provider: 'gemini',
+      model: 'gemini-test',
+      attempts: 1,
+      fallbackReasons: [],
     });
     const service = new EmailGenerationService({ generateEmail } as never);
+    const result = await service.generate('Je serai absent demain.', { language: 'fr' }, 'req-1');
 
-    const result = await service.generate({
-      transcript:
-        "Bonjour Achref, j'ai modifié l'application, mais des bugs subsistent dans la génération des emails. Je pense terminer demain matin.",
-      extraction,
-    });
-
-    expect(generateEmail).toHaveBeenCalledWith(expect.objectContaining({ extraction }));
-    expect(result.value).toMatchObject({
-      language: 'fr',
-      recipient: 'Achref',
-      confidence: 0.91,
+    expect(generateEmail).toHaveBeenCalledTimes(1);
+    expect(generateEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'generation', transcript: 'Je serai absent demain.' }),
+      'req-1',
+    );
+    expect(result.email).toMatchObject({
+      provider: 'gemini',
+      model: 'gemini-test',
+      repaired: false,
     });
   });
 });

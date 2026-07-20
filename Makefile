@@ -40,6 +40,7 @@ logs:
 
 prod-deploy:
 	$(MAKE) validate-env
+	# Production images are always rebuilt from scratch; no cached layers are reused.
 	$(MAKE) build-backend
 	$(MAKE) start-postgres
 	$(MAKE) wait-postgres
@@ -49,6 +50,8 @@ prod-deploy:
 	$(MAKE) start-backend
 	$(MAKE) wait-backend
 	$(MAKE) show-status
+	# Clean BuildKit after a successful deployment so cache disk usage cannot continuously increase.
+	docker builder prune -af
 
 validate-env:
 	cd deploy && Z_PROD_ENV_FILE="$(PROD_ENV)" ./deploy.sh validate-env

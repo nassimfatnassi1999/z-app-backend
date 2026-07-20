@@ -8,5 +8,8 @@ export class ComposeEmailDto {
   @MaxLength(12)
   language?: string;
   @IsOptional() @IsString() @MaxLength(40) tone?: string;
+  @IsOptional() @IsString() @MaxLength(200) recipient?: string;
+  @IsOptional() @IsString() @MaxLength(40) formality?: string;
+  @IsOptional() @IsString() @IsIn(['auto', 'short', 'medium', 'long']) length?: string;
   @IsOptional() @IsString() @MaxLength(50_000) previousEmail?: string;
 }

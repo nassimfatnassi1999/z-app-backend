@@ -33,6 +33,7 @@ export class VoiceComposeOrchestratorService {
         transcript: speech.transcript,
         language: speech.language,
         tone,
+        requestId,
       });
       this.logger.log(
         `requestId=${requestId} event=voice_compose_completed durationMs=${Date.now() - startedAt} sttMs=${aiStartedAt - startedAt} aiMs=${Date.now() - aiStartedAt} detectedLanguage=${speech.language}`,

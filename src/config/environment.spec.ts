@@ -9,15 +9,12 @@ const valid = {
   GROQ_API_KEY: 'test-key',
   GROQ_BASE_URL: 'https://api.groq.com/openai/v1',
   GROQ_EMAIL_MODEL: 'test-model',
-  GROQ_EXTRACTION_MODEL: 'test-model',
-  GROQ_VALIDATION_MODEL: 'test-model',
   AI_PROVIDER_ORDER: 'groq,gemini,openrouter',
   AI_PROVIDER_TIMEOUT_MS: '30000',
+  AI_MAX_TRANSCRIPT_CHARS: '20000',
   AI_PROVIDER_MAX_ATTEMPTS: '3',
   AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD: '3',
   AI_CIRCUIT_BREAKER_COOLDOWN_MS: '60000',
-  AI_REQUEST_TIMEOUT_MS: '30000',
-  AI_MAX_REPAIR_ATTEMPTS: '1',
 };
 
 describe('validateEnvironment', () => {

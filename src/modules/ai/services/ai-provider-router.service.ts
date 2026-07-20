@@ -1,12 +1,14 @@
-import { Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'crypto';
+import { AiPipelineException } from '../ai-pipeline.error';
 import { AiProviderError } from '../providers/ai-provider.error';
 import {
   AiProviderName,
   EmailAiProvider,
   EmailGenerationInput,
-  GeneratedEmail,
   ProviderHealthState,
+  RoutedEmailResult,
 } from '../providers/email-ai-provider.types';
 import { GeminiEmailAiProvider } from '../providers/gemini-email-ai.provider';
 import { GroqEmailAiProvider } from '../providers/groq-email-ai.provider';
@@ -57,20 +59,29 @@ export class AiProviderRouterService implements OnModuleInit {
     }
   }
 
-  async generateEmail(input: EmailGenerationInput): Promise<GeneratedEmail> {
+  async generateEmail(
+    input: EmailGenerationInput,
+    requestId: string = randomUUID(),
+  ): Promise<RoutedEmailResult> {
     if (!input.transcript?.trim()) {
-      throw new TypeError('Email generation requires a non-empty transcript');
+      throw new AiPipelineException('EMPTY_TRANSCRIPT', false, requestId, 'Empty transcript', 400);
     }
 
     const providers = this.getAvailableProviders();
     if (providers.length === 0) {
-      throw new ServiceUnavailableException('Aucun fournisseur IA n’est configuré.');
+      throw new AiPipelineException(
+        'NO_AI_PROVIDER_AVAILABLE',
+        true,
+        requestId,
+        'No configured AI provider is available',
+      );
     }
 
     const startIndex = await this.counter.next(providers.length);
     const attemptLimit = Math.min(this.maxAttempts, providers.length);
     let attempts = 0;
     let lastError: unknown;
+    const fallbackReasons: string[] = [];
 
     for (let offset = 0; offset < providers.length && attempts < attemptLimit; offset += 1) {
       const provider = providers[(startIndex + offset) % providers.length];
@@ -79,35 +90,90 @@ export class AiProviderRouterService implements OnModuleInit {
       attempts += 1;
       const startedAt = Date.now();
       this.logger.log(
-        `AI request started provider=${provider.name} attempt=${attempts} model=${provider.model}`,
+        JSON.stringify({
+          event: 'ai_provider_started',
+          requestId,
+          provider: provider.name,
+          model: provider.model,
+          attempt: attempts,
+          mode: input.mode ?? 'generation',
+        }),
       );
       try {
         const result = await this.executeWithTimeout(provider, input);
         this.registerSuccess(provider.name);
         this.logger.log(
-          `AI request succeeded provider=${provider.name} attempt=${attempts} model=${provider.model} latencyMs=${Date.now() - startedAt}`,
+          JSON.stringify({
+            event: 'ai_provider_succeeded',
+            requestId,
+            provider: provider.name,
+            model: provider.model,
+            attempt: attempts,
+            durationMs: Date.now() - startedAt,
+          }),
         );
-        return result;
+        return {
+          email: result,
+          provider: provider.name,
+          model: provider.model,
+          attempts,
+          fallbackReasons,
+        };
       } catch (error) {
         lastError = error;
         const eligible = this.isFailoverEligible(error);
-        if (!eligible) throw error;
+        if (!eligible) {
+          throw new AiPipelineException(
+            'EMAIL_GENERATION_FAILED',
+            false,
+            requestId,
+            this.errorReason(error),
+          );
+        }
 
         this.registerFailure(provider.name, error);
+        fallbackReasons.push(`${provider.name}:${this.errorReason(error)}`);
         this.logger.warn(
-          `AI provider failed provider=${provider.name} attempt=${attempts} model=${provider.model} reason=${this.errorReason(error)} latencyMs=${Date.now() - startedAt}`,
+          JSON.stringify({
+            event: 'ai_provider_failed',
+            requestId,
+            provider: provider.name,
+            model: provider.model,
+            attempt: attempts,
+            reason: this.errorReason(error),
+            durationMs: Date.now() - startedAt,
+          }),
         );
         if (attempts < attemptLimit) {
           this.logger.warn(
-            `AI failover triggered after=${provider.name} nextAttempt=${attempts + 1}`,
+            JSON.stringify({
+              event: 'ai_provider_fallback',
+              requestId,
+              after: provider.name,
+              nextAttempt: attempts + 1,
+              reason: this.errorReason(error),
+            }),
           );
         }
       }
     }
 
-    throw new ServiceUnavailableException(
-      'Tous les fournisseurs IA sont temporairement indisponibles.',
-      { cause: lastError },
+    const reasons = fallbackReasons.map((reason) => reason.slice(reason.indexOf(':') + 1));
+    const onlyTimeouts = reasons.length > 0 && reasons.every((reason) => reason === 'timeout');
+    const onlyInvalidResponses =
+      reasons.length > 0 &&
+      reasons.every((reason) =>
+        ['invalid_json', 'invalid_output', 'empty_response'].includes(reason),
+      );
+    throw new AiPipelineException(
+      onlyTimeouts
+        ? 'AI_PROVIDER_TIMEOUT'
+        : onlyInvalidResponses
+          ? 'INVALID_AI_RESPONSE'
+          : 'NO_AI_PROVIDER_AVAILABLE',
+      true,
+      requestId,
+      lastError instanceof Error ? lastError.name : 'All AI providers failed',
     );
   }
 
@@ -148,14 +214,15 @@ export class AiProviderRouterService implements OnModuleInit {
 
   private async executeWithTimeout(provider: EmailAiProvider, input: EmailGenerationInput) {
     let timeout: NodeJS.Timeout | undefined;
+    const controller = new AbortController();
     try {
       return await Promise.race([
-        provider.generateEmail(input),
+        provider.generateEmail(input, controller.signal),
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () => reject(new AiProviderError('timeout', 'AI provider request timed out')),
-            this.timeoutMs,
-          );
+          timeout = setTimeout(() => {
+            controller.abort();
+            reject(new AiProviderError('timeout', 'AI provider request timed out'));
+          }, this.timeoutMs);
         }),
       ]);
     } finally {
@@ -188,7 +255,7 @@ export class AiProviderRouterService implements OnModuleInit {
   }
 
   private isFailoverEligible(error: unknown) {
-    if (!(error instanceof AiProviderError)) return false;
+    if (!(error instanceof AiProviderError)) return true;
     if (error.kind === 'http')
       return Boolean(error.status && FAILOVER_HTTP_STATUSES.has(error.status));
     return true;

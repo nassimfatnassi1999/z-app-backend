@@ -143,8 +143,15 @@ build_backend() {
   require_tools
   # Stop an old backend before repairing/migrating, but preserve PostgreSQL and its volume.
   compose stop "$BACKEND_SERVICE" >/dev/null 2>&1 || true
-  log 'Building the production backend image...'
-  compose build "$BACKEND_SERVICE"
+  # Always rebuild the image from scratch so no cached layers are reused.
+  log 'Building the production backend image without cached layers...'
+  compose build --no-cache "$BACKEND_SERVICE"
+}
+
+clean_buildkit_cache() {
+  # Clean BuildKit after deployment to prevent cache disk usage from continuously increasing.
+  log 'Cleaning the Docker BuildKit cache...'
+  docker builder prune -af
 }
 
 start_postgres() {
@@ -400,6 +407,7 @@ deploy_all() {
   start_backend
   wait_backend
   show_status
+  clean_buildkit_cache
 }
 
 prepare_database_url
