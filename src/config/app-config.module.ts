@@ -8,7 +8,8 @@ import { validateEnvironment } from './environment';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: ['.env.production', '.env', 'deploy/.env.prod'],
+      envFilePath: '.env',
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
       expandVariables: true,
       validate: validateEnvironment,
     }),

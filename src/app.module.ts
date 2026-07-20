@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { AppConfigModule } from './config/app-config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AiModule } from './modules/ai/ai.module';
@@ -11,21 +11,12 @@ import { ConversationsModule } from './modules/conversations/conversations.modul
 import { MailboxModule } from './modules/mailbox/mailbox.module';
 import { HealthController } from './health.controller';
 import { NotificationsModule } from './modules/notifications/notifications.module';
-import { validateEnvironment } from './config/environment';
 import { RateLimitGuard } from './common/guards/rate-limit.guard';
 import { ComposeModule } from './modules/compose/compose.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-      // Production receives an explicit Compose environment. Never depend on
-      // a file being copied into the runtime image.
-      ignoreEnvFile: process.env.NODE_ENV === 'production',
-      expandVariables: true,
-      validate: validateEnvironment,
-    }),
+    AppConfigModule,
     PrismaModule,
     AuthModule,
     AiModule,
